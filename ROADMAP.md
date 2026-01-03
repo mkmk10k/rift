@@ -19,12 +19,20 @@ Automatically detect the appropriate polish mode based on context rather than re
 
 ## Ideas (Exploring)
 
+### Visual & Experience
+- **Alternative visual metaphors** — Explore other Three.js / TSL-based visualizations beyond the black hole
+- **Speed/pitch controls** — Adjust TTS voice characteristics
+
+### Models & Intelligence
+- **Alternative local models** — Evaluate other STT, TTS, and LLM models as they emerge
+- **Public evals scorecard** — Share benchmark results comparing model performance
+
+### Features
 - **Voice commands** — "new paragraph", "delete that" during dictation
 - **Speaker diarization** — Identify different speakers in meetings
 - **Custom vocabulary** — Learn proper nouns and technical terms
 - **Clipboard history** — Integration with macOS clipboard
 - **Markdown detection** — Smart formatting for markdown editors
-- **Speed/pitch controls** — Adjust TTS voice characteristics
 
 ---
 
