@@ -1,58 +1,56 @@
-# Rift Roadmap
+# Roadmap
 
-## Feature Backlog
+> Planned features and improvements for Rift.
 
-### High Priority
+## High Priority
 
-#### Auto-Context Polish Mode Detection
-**Status:** Planned  
-**Effort:** Medium  
-**Impact:** High
+### Auto-Context Polish Mode Detection
 
-Automatically detect the appropriate polish mode based on context rather than requiring user preference.
+**Status:** Planned
 
-**Implementation ideas:**
+Automatically detect the appropriate polish mode based on context rather than requiring manual selection.
+
+**How it will work:**
 - Detect active application (Slack vs Word vs email client)
 - Analyze surrounding text for formal vs casual tone
-- Use frontmost window title/bundle ID to infer context
 - Auto-switch between verbatim/clean/professional modes
 
-**Technical approach:**
-1. Add `NSWorkspace` observer to detect active app bundle ID
-2. Create app-to-mode mapping (e.g., Slack → clean, Word → professional)
-3. Optional: Use LLM to analyze paste target context
-4. Fall back to user preference if context unclear
+---
 
-**When complete:**
-- [ ] Update landing page to reflect automatic detection
-- [ ] Change "Your style, automatically" section to emphasize zero-config intelligence
-- [ ] Update comparison table to highlight this as differentiator
+## Ideas (Exploring)
+
+- **Voice commands** — "new paragraph", "delete that" during dictation
+- **Speaker diarization** — Identify different speakers in meetings
+- **Custom vocabulary** — Learn proper nouns and technical terms
+- **Clipboard history** — Integration with macOS clipboard
+- **Markdown detection** — Smart formatting for markdown editors
+- **Speed/pitch controls** — Adjust TTS voice characteristics
 
 ---
 
-## Completed Features
+## Recently Completed
 
 ### LLM Integration (Qwen3)
-- [x] Three-tier model architecture (0.6B, 1.7B, 4B)
-- [x] Real-time merge (Phase 2)
-- [x] Rolling sentence correction (Phase 3)
-- [x] Final polish with modes (Phase 4)
-- [x] Silence polish (backend-triggered)
-- [x] Adaptive model loading based on memory
+- ✓ Three-tier model architecture (0.6B fast, 4B intelligence)
+- ✓ Real-time text merging during speech
+- ✓ Rolling sentence correction
+- ✓ Polish modes (clean, professional, verbatim)
+- ✓ Silence-triggered automatic polish
+- ✓ Adaptive model loading based on available memory
 
-### Landing Page v2
-- [x] Apple-style design language
-- [x] LLM feature sections
-- [x] Updated architecture diagrams
-- [x] Technology credits (Qwen3)
-- [x] Comparison table updates
+### Core Features
+- ✓ Local speech-to-text (Parakeet)
+- ✓ Local text-to-speech (Kokoro)
+- ✓ Filler word removal ("um", "uh", "like")
+- ✓ List detection and formatting
+- ✓ Background noise filtering
 
 ---
 
-## Ideas (Unvalidated)
+## Contributing Ideas
 
-- Voice commands during dictation ("new paragraph", "delete that")
-- Speaker diarization for meeting transcription
-- Custom vocabulary / proper noun learning
-- Clipboard history integration
-- Markdown formatting detection
+Have a feature suggestion? Open an issue on GitHub describing:
+
+1. What problem it solves
+2. How you imagine it working
+3. Any technical considerations

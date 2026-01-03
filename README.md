@@ -1,10 +1,22 @@
-# Rift
+<p align="center">
+  <img src="https://myrift.dev/assets/rift-logo.png" alt="Rift" width="120" />
+</p>
 
-**Speak, it types. Select, it reads.**
+<h1 align="center">Rift</h1>
 
-Voice-to-text and text-to-speech for macOS — private, fast, and entirely on-device.
+<p align="center">
+  <strong>Speak, it types. Select, it reads.</strong><br>
+  Voice-to-text and text-to-speech for macOS — private, fast, and entirely on-device.
+</p>
 
-Website: https://myrift.dev
+<p align="center">
+  <a href="https://myrift.dev">Website</a> •
+  <a href="#features">Features</a> •
+  <a href="#installation">Installation</a> •
+  <a href="#architecture">Architecture</a> •
+  <a href="#development">Development</a> •
+  <a href="KNOWN_LIMITATIONS.md">Limitations</a>
+</p>
 
 ---
 
@@ -38,6 +50,8 @@ Website: https://myrift.dev
 - ~2GB disk space for models
 - 8GB RAM minimum (16GB recommended)
 
+> ⚠️ **Alpha Preview** — See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) for current limitations.
+
 ---
 
 ## Installation
@@ -47,7 +61,7 @@ Visit [myrift.dev](https://myrift.dev) to download the latest release.
 
 ### Build from Source
 
-```bash
+\`\`\`bash
 # Clone the repository
 git clone https://github.com/mkmk10k/rift.git
 cd rift
@@ -67,13 +81,15 @@ bun run build
 
 # Package as DMG
 bun run package
-```
+\`\`\`
 
 ---
 
 ## Architecture
 
-```
+Rift uses a multi-process architecture optimized for Apple Silicon:
+
+\`\`\`
 rift/
 ├── src/
 │   ├── main/           # Electron main process
@@ -91,17 +107,17 @@ rift/
 │   └── llm_server.py   # Text polish (Qwen3)
 ├── tools/              # macOS accessibility tools
 └── test-engine/        # E2E test framework
-```
+\`\`\`
 
 ### Key Technologies
 
 | Component | Technology | Purpose |
 |-----------|------------|---------|
-| Framework | Electron 28 | Native macOS app |
+| Framework | Electron 28 | Native macOS app with web technologies |
 | UI | React 18 + TypeScript | Reactive interface |
-| STT | Parakeet TDT 0.6B | Speech recognition |
-| TTS | Kokoro | Voice synthesis |
-| LLM | Qwen3 (0.6B/4B) | Smart formatting |
+| STT | Parakeet TDT 0.6B | Fast, accurate speech recognition |
+| TTS | Kokoro | Natural voice synthesis |
+| LLM | Qwen3 (0.6B/4B) | Smart formatting and polish |
 | ML Runtime | MLX | Apple Silicon optimization |
 
 ### Novel Techniques
@@ -118,35 +134,51 @@ rift/
 
 | Shortcut | Action |
 |----------|--------|
-| Ctrl+2 | Start/stop voice dictation |
-| Ctrl+1 | Read selected text aloud |
+| \`Ctrl+2\` | Start/stop voice dictation |
+| \`Ctrl+1\` | Read selected text aloud |
 
 ---
 
 ## Development
 
-```bash
+### Running Tests
+
+\`\`\`bash
 # LLM unit tests
 bunx ts-node test-engine/llm-runner.ts
 
-# E2E tests
+# E2E tests (requires TTS/STT servers running)
 bunx ts-node test-engine/e2e-paste-test.ts
-```
+\`\`\`
 
-See [DECISIONS.md](DECISIONS.md) for architectural decisions.
+### Documentation
+
+| Document | Description |
+|----------|-------------|
+| [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) | Current limitations and system requirements |
+| [ROADMAP.md](ROADMAP.md) | Planned features and improvements |
+| [DECISIONS.md](DECISIONS.md) | Architectural decisions and rationale |
 
 ---
 
 ## Customizing Prompts
 
-Rift loads LLM prompts from python/prompts.json. Copy the example to customize:
+Rift loads LLM prompts from \`python/prompts.json\`. A basic example is provided in \`python/prompts.example.json\`.
 
-```bash
+To customize:
+\`\`\`bash
 cp python/prompts.example.json python/prompts.json
-```
+# Edit prompts.json with your own few-shot examples
+\`\`\`
 
 ---
 
 ## License
 
 MIT License — see [LICENSE](LICENSE) for details.
+
+---
+
+<p align="center">
+  <sub>Built with care on Apple Silicon</sub>
+</p>
