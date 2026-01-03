@@ -1,0 +1,152 @@
+{
+  "name": "rift",
+  "version": "2026.01.02+cfc5e46",
+  "description": "Rift - Your voice. Your Mac. Nothing else.",
+  "main": "dist/main/main/index.js",
+  "author": "Mikko Kiiskila",
+  "license": "MIT",
+  "scripts": {
+    "dev": "concurrently \"bun run dev:renderer\" \"bun run dev:electron\"",
+    "dev:renderer": "vite",
+    "dev:electron": "bun run build:electron && wait-on http://localhost:5173 && ELECTRON_RUN_AS_NODE= VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
+    "build": "bun run build:renderer && bun run build:electron",
+    "build:renderer": "vite build",
+    "build:electron": "tsc -p tsconfig.main.json && tsc -p tsconfig.preload.json",
+    "version": "node scripts/update-version.js",
+    "package": "bun run version && bun run build && electron-builder --mac && node scripts/verify-build.js",
+    "package:dmg": "bun run version && bun run build && electron-builder --mac dmg && node scripts/verify-build.js",
+    "package:zip": "bun run version && bun run build && electron-builder --mac zip && node scripts/verify-build.js",
+    "verify-build": "node scripts/verify-build.js",
+    "start": "electron .",
+    "test:live-paste": "npx ts-node test-engine/index.ts",
+    "test:live-paste:phase": "npx ts-node test-engine/index.ts --phase",
+    "test:live-paste:improve": "npx ts-node test-engine/index.ts --improve",
+    "test:llm": "npx ts-node test-engine/llm-runner.ts",
+    "test:llm:phase2": "npx ts-node test-engine/llm-runner.ts --phase 2",
+    "test:llm:phase3": "npx ts-node test-engine/llm-runner.ts --phase 3",
+    "test:llm:phase4": "npx ts-node test-engine/llm-runner.ts --phase 4",
+    "test:all": "bun run test:live-paste && bun run test:llm"
+  },
+  "keywords": [
+    "voice",
+    "tts",
+    "stt",
+    "speech",
+    "macos",
+    "mlx",
+    "apple-silicon"
+  ],
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/react": "^18.2.45",
+    "@types/react-dom": "^18.2.18",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.16",
+    "concurrently": "^8.2.2",
+    "electron": "^28.3.3",
+    "electron-builder": "^24.9.1",
+    "postcss": "^8.4.32",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.10",
+    "wait-on": "^9.0.3"
+  },
+  "dependencies": {
+    "@electron/remote": "^2.1.1",
+    "@types/three": "^0.182.0",
+    "electron-store": "8.2.0",
+    "ffmpeg-static": "^5.3.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "three": "^0.182.0",
+    "uiohook-napi": "^1.5.4"
+  },
+  "build": {
+    "appId": "dev.myrift.app",
+    "productName": "Rift",
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "npmRebuild": false,
+    "directories": {
+      "output": "dist-package"
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "entitlements.mac.plist",
+      "entitlementsInherit": "entitlements.mac.plist",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "dmg": {
+      "title": "${productName} ${version}",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "python",
+        "to": "python",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "assets",
+        "to": ".",
+        "filter": [
+          "*.png"
+        ]
+      },
+      {
+        "from": "tools",
+        "to": "tools",
+        "filter": [
+          "type-text",
+          "paste-text",
+          "ax-insert-text",
+          "inject-text",
+          "switch-input"
+        ]
+      },
+      {
+        "from": "input-method/build",
+        "to": "input-method",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/uiohook-napi/**/*",
+      "node_modules/ffmpeg-static/**/*"
+    ]
+  }
+}

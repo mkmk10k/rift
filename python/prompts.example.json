@@ -1,0 +1,19 @@
+{
+  "_comment": "Example prompts - basic versions that work but are not optimized. Copy to prompts.json to use.",
+  
+  "MERGE_PROMPT": "<|im_start|>system\nExtract only the new words from a speech update.<|im_end|>\n<|im_start|>user\nPASTED: Hello world\nNEW: Hello world today<|im_end|>\n<|im_start|>assistant\ntoday<|im_end|>\n<|im_start|>user\nPASTED: {pasted}\nNEW: {new_text} /no_think<|im_end|>\n<|im_start|>assistant\n",
+
+  "CORRECT_SENTENCE_PROMPT": "<|im_start|>system\nFix grammar and punctuation in the sentence.<|im_end|>\n<|im_start|>user\nORIGINAL: {original}\nLATEST: {latest} /no_think<|im_end|>\n<|im_start|>assistant\n",
+
+  "EXTRACT_NEW_WORDS_PROMPT": "<|im_start|>system\nFind words in TAIL that are not in END.<|im_end|>\n<|im_start|>user\nEND: {pasted_end}\nTAIL: {tail_words} /no_think<|im_end|>\n<|im_start|>assistant\n",
+
+  "POLISH_PROMPTS": {
+    "verbatim": "<|im_start|>system\nFix only typos and punctuation. Keep all filler words.<|im_end|>\n<|im_start|>user\n{final_text} /no_think<|im_end|>\n<|im_start|>assistant\n",
+    
+    "clean": "<|im_start|>system\nClean up the transcription: remove filler words (um, uh, like), fix punctuation, format numbers.<|im_end|>\n<|im_start|>user\n{final_text} /no_think<|im_end|>\n<|im_start|>assistant\n",
+    
+    "professional": "<|im_start|>system\nPolish into professional writing. Remove fillers, fix grammar, format properly.<|im_end|>\n<|im_start|>user\n{final_text} /no_think<|im_end|>\n<|im_start|>assistant\n"
+  },
+
+  "DEEP_CLEANUP_PROMPT": "<|im_start|>system\nClean up the sentence: fix grammar, remove fillers, format numbers.<|im_end|>\n<|im_start|>user\n{sentence} /no_think<|im_end|>\n<|im_start|>assistant\n"
+}

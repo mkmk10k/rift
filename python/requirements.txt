@@ -1,0 +1,8 @@
+# STT - Parakeet model for speech-to-text
+mlx-audio>=0.2.5
+numpy>=1.24.0
+soundfile>=0.12.1
+
+# LLM - Qwen3 for Live Paste text enhancement
+# Phase 2: Intelligent merge, Phase 3: Rolling correction, Phase 4: Final polish
+mlx-lm>=0.19.0

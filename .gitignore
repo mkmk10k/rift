@@ -1,44 +1,64 @@
-# OS
-.DS_Store
-Thumbs.db
+# ═══════════════════════════════════════════════════════════════════════════════
+# Rift - .gitignore
+# ═══════════════════════════════════════════════════════════════════════════════
 
-# Editor
-.idea/
-.vscode/
-*.swp
-*.swo
+# ─── Private Configuration ───
+# Real prompts are kept private - use prompts.example.json as template
+python/prompts.json
 
-# Dependencies
+# ─── Dependencies ───
 node_modules/
 .bun/
 
-# Build
+# ─── Build Artifacts ───
 dist/
 dist-package/
 build/
 out/
+*.dmg
+*.app
 
-# Python
+# ─── Python ───
 __pycache__/
 *.pyc
+*.pyo
 .venv/
 venv/
+.python-version
 
-# Environment
+# ─── Environment ───
 .env
 .env.local
 .env.*.local
 
-# Logs
+# ─── Logs ───
 *.log
 npm-debug.log*
 
-# Models (downloaded separately)
+# ─── Test Artifacts ───
+test-engine/history.jsonl
+test-engine/*.log
+test-engine/captures/
+
+# ─── Editor / IDE ───
+.idea/
+.vscode/
+*.swp
+*.swo
+.cursor/
+
+# ─── OS ───
+.DS_Store
+Thumbs.db
+
+# ─── Models (downloaded separately) ───
 models/
 *.mlmodelc
 *.gguf
 
-# Electron
+# ─── Electron ───
 release/
-*.dmg
-*.app
+
+# ─── Temporary ───
+*.tmp
+*.temp
