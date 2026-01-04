@@ -14,8 +14,7 @@
   <a href="#features">Features</a> •
   <a href="#installation">Installation</a> •
   <a href="#architecture">Architecture</a> •
-  <a href="#development">Development</a> •
-  <a href="KNOWN_LIMITATIONS.md">Limitations</a>
+  <a href="#development">Development</a>
 </p>
 
 ---
@@ -50,8 +49,6 @@
 - ~2GB disk space for models
 - 8GB RAM minimum (16GB recommended)
 
-> ⚠️ **Alpha Preview** — See [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) for current limitations.
-
 ---
 
 ## Installation
@@ -61,7 +58,7 @@ Visit [myrift.dev](https://myrift.dev) to download the latest release.
 
 ### Build from Source
 
-\`\`\`bash
+```bash
 # Clone the repository
 git clone https://github.com/mkmk10k/rift.git
 cd rift
@@ -81,7 +78,7 @@ bun run build
 
 # Package as DMG
 bun run package
-\`\`\`
+```
 
 ---
 
@@ -89,7 +86,7 @@ bun run package
 
 Rift uses a multi-process architecture optimized for Apple Silicon:
 
-\`\`\`
+```
 rift/
 ├── src/
 │   ├── main/           # Electron main process
@@ -107,7 +104,7 @@ rift/
 │   └── llm_server.py   # Text polish (Qwen3)
 ├── tools/              # macOS accessibility tools
 └── test-engine/        # E2E test framework
-\`\`\`
+```
 
 ### Key Technologies
 
@@ -134,8 +131,8 @@ rift/
 
 | Shortcut | Action |
 |----------|--------|
-| \`Ctrl+2\` | Start/stop voice dictation |
-| \`Ctrl+1\` | Read selected text aloud |
+| `Ctrl+2` | Start/stop voice dictation |
+| `Ctrl+1` | Read selected text aloud |
 
 ---
 
@@ -143,33 +140,30 @@ rift/
 
 ### Running Tests
 
-\`\`\`bash
+```bash
 # LLM unit tests
 bunx ts-node test-engine/llm-runner.ts
 
 # E2E tests (requires TTS/STT servers running)
 bunx ts-node test-engine/e2e-paste-test.ts
-\`\`\`
+```
 
-### Documentation
+### Project Structure
 
-| Document | Description |
-|----------|-------------|
-| [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) | Current limitations and system requirements |
-| [ROADMAP.md](ROADMAP.md) | Planned features and improvements |
-| [DECISIONS.md](DECISIONS.md) | Architectural decisions and rationale |
+See [DECISIONS.md](DECISIONS.md) for architectural decisions and rationale.
+See [ISSUES.md](ISSUES.md) for known issues and current status.
 
 ---
 
 ## Customizing Prompts
 
-Rift loads LLM prompts from \`python/prompts.json\`. A basic example is provided in \`python/prompts.example.json\`.
+Rift loads LLM prompts from `python/prompts.json`. A basic example is provided in `python/prompts.example.json`.
 
 To customize:
-\`\`\`bash
+```bash
 cp python/prompts.example.json python/prompts.json
 # Edit prompts.json with your own few-shot examples
-\`\`\`
+```
 
 ---
 

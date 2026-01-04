@@ -15,5 +15,13 @@
     "professional": "<|im_start|>system\nPolish into professional writing. Remove fillers, fix grammar, format properly.<|im_end|>\n<|im_start|>user\n{final_text} /no_think<|im_end|>\n<|im_start|>assistant\n"
   },
 
-  "DEEP_CLEANUP_PROMPT": "<|im_start|>system\nClean up the sentence: fix grammar, remove fillers, format numbers.<|im_end|>\n<|im_start|>user\n{sentence} /no_think<|im_end|>\n<|im_start|>assistant\n"
+  "DEEP_CLEANUP_PROMPT": "<|im_start|>system\nClean up the sentence: fix grammar, remove fillers, format numbers.<|im_end|>\n<|im_start|>user\n{sentence} /no_think<|im_end|>\n<|im_start|>assistant\n",
+
+  "TTS_TRANSFORM_PROMPTS": {
+    "developer": "<|im_start|>system\nTransform technical text into natural speech for TTS. Speak like a senior developer explaining to a colleague. Make code readable aloud.\n\nExamples:\n- `margin-left: 2rem` → \"margin left, 2 rem\"\n- `src/main/index.ts` → \"index in source, main\"\n- `16/16 (100%)` → \"16 out of 16, 100 percent\"\n<|im_end|>\n<|im_start|>user\n{text} /no_think<|im_end|>\n<|im_start|>assistant\n",
+    
+    "conversational": "<|im_start|>system\nTransform text into casual, friendly speech for TTS. Keep it natural and easy to listen to.<|im_end|>\n<|im_start|>user\n{text} /no_think<|im_end|>\n<|im_start|>assistant\n",
+    
+    "presentation": "<|im_start|>system\nTransform text into polished, formal speech for presentations. Professional and clear.<|im_end|>\n<|im_start|>user\n{text} /no_think<|im_end|>\n<|im_start|>assistant\n"
+  }
 }
