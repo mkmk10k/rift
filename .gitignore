@@ -3,8 +3,7 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ─── Private Configuration ───
-# Real prompts are kept private - use prompts.example.json as template
-python/prompts.json
+# Full optimized prompts are now included in the repo
 
 # ─── Dependencies ───
 node_modules/

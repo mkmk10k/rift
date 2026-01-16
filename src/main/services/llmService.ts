@@ -478,6 +478,47 @@ class LLMServer {
   }
   
   /**
+   * Transform text for TTS (Code Talk feature)
+   * Converts technical content into natural developer-speak before TTS synthesis.
+   */
+  async transformForTTS(
+    text: string,
+    mode: string = 'developer'
+  ): Promise<{
+    success: boolean;
+    transformed?: string;
+    skipped?: boolean;
+    reason?: string;
+    inference_time_ms?: number;
+    word_ratio?: number;
+    error?: string;
+  }> {
+    try {
+      const response = await this.send({
+        action: 'transform_for_tts',
+        text,
+        mode,
+      });
+      
+      if (response.type === 'error') {
+        return { success: false, error: response.error };
+      }
+      
+      return {
+        success: true,
+        transformed: response.transformed,
+        skipped: response.skipped,
+        reason: response.reason,
+        inference_time_ms: response.inference_time_ms,
+        word_ratio: response.word_ratio,
+      };
+    } catch (err: any) {
+      console.error('[LLM] Transform for TTS failed:', err.message);
+      return { success: false, error: err.message };
+    }
+  }
+  
+  /**
    * Get server status
    */
   async getStatus(): Promise<{

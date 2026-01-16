@@ -1,6 +1,6 @@
 {
   "name": "rift",
-  "version": "2026.01.02+cfc5e46",
+  "version": "2026.01.04+7eaed1e",
   "description": "Rift - Your voice. Your Mac. Nothing else.",
   "main": "dist/main/main/index.js",
   "author": "Mikko Kiiskila",
@@ -25,7 +25,10 @@
     "test:llm:phase2": "npx ts-node test-engine/llm-runner.ts --phase 2",
     "test:llm:phase3": "npx ts-node test-engine/llm-runner.ts --phase 3",
     "test:llm:phase4": "npx ts-node test-engine/llm-runner.ts --phase 4",
-    "test:all": "bun run test:live-paste && bun run test:llm"
+    "test:all": "bun run test:live-paste && bun run test:llm",
+    "release": "node scripts/release.js",
+    "release:dry": "node scripts/release.js --dry-run",
+    "bundle:python": "node scripts/bundle-python.js"
   },
   "keywords": [
     "voice",
@@ -111,10 +114,19 @@
     ],
     "extraResources": [
       {
-        "from": "python",
+        "from": "python-bundle",
         "to": "python",
         "filter": [
           "**/*"
+        ]
+      },
+      {
+        "from": "python",
+        "to": "python",
+        "filter": [
+          "*.py",
+          "*.json",
+          "*.wav"
         ]
       },
       {

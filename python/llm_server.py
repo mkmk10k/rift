@@ -117,6 +117,11 @@ def get_polish_prompt(mode: str):
 def get_deep_cleanup_prompt():
     return get_prompts()["DEEP_CLEANUP_PROMPT"]
 
+def get_tts_transform_prompt(mode: str):
+    """Get TTS transform prompt for Code Talk feature."""
+    prompts = get_prompts().get("TTS_TRANSFORM_PROMPTS", {})
+    return prompts.get(mode, prompts.get("developer", ""))
+
 # Legacy compatibility - these will be replaced with function calls
 MERGE_PROMPT = None  # Use get_merge_prompt() instead
 
@@ -1281,6 +1286,131 @@ def handle_deep_cleanup(sentence: str, checksum: str, gpu_busy: bool = False) ->
         }
 
 
+def handle_transform_for_tts(text: str, mode: str = "developer") -> dict:
+    """
+    Transform text into natural spoken form for TTS (Code Talk feature).
+    
+    This pre-processes technical content before TTS synthesis to make it
+    sound like how expert developers naturally explain code.
+    
+    Args:
+        text: The technical text to transform
+        mode: Speech mode - 'developer', 'conversational', or 'presentation'
+    
+    Returns:
+        - transformed: The text rewritten for natural TTS
+        - inference_time_ms: How long the LLM took
+    
+    Uses the 4B intelligence model for high-quality code-to-speech transformation.
+    This is a complex task requiring good instruction following.
+    Memory is managed by swapping out quality model if needed.
+    """
+    start = time.time()
+    
+    try:
+        # Get prompt template for the mode
+        prompt_template = get_tts_transform_prompt(mode)
+        
+        if not prompt_template:
+            log(f"[TTS Transform] No prompt for mode '{mode}', returning original")
+            return {
+                "type": "tts_transform_result",
+                "transformed": text,
+                "inference_time_ms": 0,
+                "skipped": True,
+                "reason": "no_prompt",
+            }
+        
+        log(f"[TTS Transform] Processing ({mode}): len={len(text)}")
+        
+        # Use 4B deep model for best code-to-speech transformation
+        # The smaller models can't handle complex instruction following
+        # Unload quality model first to make room (handled by load_deep_model)
+        model, tokenizer = load_deep_model(swap_out_quality=True)
+        
+        if model is None:
+            log("[TTS Transform] Failed to load deep model, returning original")
+            return {
+                "type": "tts_transform_result",
+                "transformed": text,
+                "inference_time_ms": int((time.time() - start) * 1000),
+                "skipped": True,
+                "reason": "model_load_failed",
+            }
+        
+        # Format prompt with input text
+        prompt = prompt_template.format(text=text)
+        
+        # Generate with appropriate token limit
+        # Allow more expansion for natural speech (code becomes words)
+        max_tokens = min(len(text.split()) * 4 + 100, 800)
+        
+        inference_start = time.time()
+        result = generate_text(
+            model, 
+            tokenizer, 
+            prompt, 
+            max_tokens=max_tokens,
+            fallback=text  # Return original if generation fails
+        )
+        inference_time = int((time.time() - inference_start) * 1000)
+        
+        # Clean up result
+        transformed = result.strip() if result else text
+        transformed = sanitize_output(transformed)
+        
+        # Validate: output shouldn't be empty or drastically different length
+        if not transformed:
+            log("[TTS Transform] Empty result, using original")
+            return {
+                "type": "tts_transform_result",
+                "transformed": text,
+                "inference_time_ms": inference_time,
+                "skipped": True,
+                "reason": "empty_result",
+            }
+        
+        # Check expansion ratio (shouldn't be more than 3x or less than 0.3x)
+        input_words = len(text.split())
+        output_words = len(transformed.split())
+        ratio = output_words / max(input_words, 1)
+        
+        if ratio > 5.0 or ratio < 0.2:
+            log(f"[TTS Transform] Rejected: ratio {ratio:.2f} out of bounds")
+            return {
+                "type": "tts_transform_result",
+                "transformed": text,
+                "inference_time_ms": inference_time,
+                "skipped": True,
+                "reason": "ratio_rejected",
+            }
+        
+        elapsed = int((time.time() - start) * 1000)
+        
+        log(f"[TTS Transform] Complete: {input_words} → {output_words} words, ratio={ratio:.2f}, time={elapsed}ms")
+        
+        return {
+            "type": "tts_transform_result",
+            "transformed": transformed,
+            "original": text,
+            "mode": mode,
+            "inference_time_ms": elapsed,
+            "word_ratio": ratio,
+        }
+        
+    except Exception as e:
+        log(f"ERROR in transform_for_tts: {e}")
+        traceback.print_exc(file=sys.stderr)
+        return {
+            "type": "tts_transform_result",
+            "transformed": text,
+            "inference_time_ms": 0,
+            "skipped": True,
+            "reason": "error",
+            "error": str(e),
+        }
+
+
 def handle_get_status() -> dict:
     """Return server status"""
     return {
@@ -1390,6 +1520,12 @@ def main() -> None:
                     command.get("sentence", ""),
                     command.get("checksum", ""),
                     command.get("gpu_busy", False)
+                )
+            
+            elif action == "transform_for_tts":
+                result = handle_transform_for_tts(
+                    command.get("text", ""),
+                    command.get("mode", "developer")
                 )
             
             elif action == "swap_to_realtime":

@@ -1,13 +1,15 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, nativeImage, dialog } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, nativeImage, dialog, clipboard } from 'electron';
 import * as path from 'path';
 import { createWidgetWindow } from './windows/widget';
 import { registerIpcHandlers, shutdownServers } from './ipc/handlers';
 import { initHoldToTalk, setHoldToTalkEnabled, stopHook } from './keyboard/holdToTalk';
-import { runSetupCheck, findPythonPath } from './setup/pythonSetup';
+import { runSetupCheck, findPythonPath, collectDiagnostics } from './setup/pythonSetup';
 import { getSetting, setSetting, getAllSettings, AppSettings } from './services/settings';
+import { checkForUpdates } from './services/updateService';
 import { setupTestCaptureHandlers } from './services/testCaptureService';
 import { startTestServer, stopTestServer, isTestMode, getTestPort } from './services/testServer';
 import { HeadlessTestRunner, isHeadlessTestMode } from './services/headlessTestRunner';
+import { modelDownloadService, DownloadProgress } from './services/modelDownloadService';
 
 /**
  * Main Electron process entry point
@@ -44,12 +46,48 @@ app.whenReady().then(async () => {
     return;
   }
   
-  // Run first-launch setup check
+  // Run first-launch setup check (Python verification)
   const setupOk = await runSetupCheck(null);
   if (!setupOk) {
     console.log('[Rift] Setup incomplete, quitting...');
     app.quit();
     return;
+  }
+
+  // Create system tray EARLY (so we can show download progress)
+  createTray();
+
+  // Check if models need to be downloaded
+  if (!modelDownloadService.areModelsDownloaded()) {
+    console.log('[Rift] First launch - downloading models...');
+    
+    // Set up progress listeners
+    modelDownloadService.on('modelStart', (progress: DownloadProgress) => {
+      console.log(`[Rift] Downloading ${progress.name}...`);
+      updateTrayMenuDownloading(progress.name, 0, progress.totalMb);
+    });
+    
+    modelDownloadService.on('progress', (progress: DownloadProgress) => {
+      updateTrayMenuDownloading(progress.name, progress.downloadedMb, progress.totalMb);
+    });
+    
+    modelDownloadService.on('modelComplete', (info: { model: string; name: string; cached: boolean }) => {
+      console.log(`[Rift] ${info.name} ${info.cached ? 'already cached' : 'downloaded'}`);
+    });
+    
+    // Start download
+    const downloadOk = await modelDownloadService.downloadModels();
+    
+    // Remove listeners
+    modelDownloadService.removeAllListeners();
+    
+    if (!downloadOk) {
+      console.error('[Rift] Model download failed');
+      // Continue anyway - some models might work
+    }
+    
+    // Switch to normal menu
+    updateTrayMenu();
   }
 
   // Register IPC handlers
@@ -64,9 +102,6 @@ app.whenReady().then(async () => {
     console.log('[Rift] Running in TEST MODE');
     startTestServer(mainWindow, getTestPort());
   }
-
-  // Create system tray
-  createTray();
 
   // Initialize hold-to-talk keyboard hook
   initHoldToTalk(mainWindow);
@@ -149,22 +184,8 @@ app.on('before-quit', () => {
  * Create system tray icon with comprehensive menu
  */
 function createTray() {
-  const iconSize = 22;
-  const iconPath = app.isPackaged
-    ? path.join(process.resourcesPath, 'tray-icon.png')
-    : path.join(__dirname, '../../assets/tray-icon.png');
-  
-  try {
-    const customIcon = nativeImage.createFromPath(iconPath);
-    if (!customIcon.isEmpty()) {
-      tray = new Tray(customIcon.resize({ width: iconSize, height: iconSize }));
-    } else {
-      tray = new Tray(createFallbackIcon());
-    }
-  } catch {
-    tray = new Tray(createFallbackIcon());
-  }
-
+  // Use our beautiful programmatic black hole icon
+  tray = new Tray(createBlackHoleIcon());
   tray.setToolTip('Rift');
   updateTrayMenu();
   
@@ -181,32 +202,64 @@ function createTray() {
   });
 }
 
-function createFallbackIcon(): Electron.NativeImage {
+/**
+ * Create a sharp black hole icon for the menu bar.
+ * Interstellar-style: thin ring with horizontal accretion disk through center.
+ * Clean geometric design matching macOS menu bar icon style.
+ */
+function createBlackHoleIcon(): Electron.NativeImage {
   const size = 22;
   const canvas = Buffer.alloc(size * size * 4);
   
+  const cx = size / 2;
+  const cy = size / 2;
+  
+  // Parameters for clean geometric look
+  const outerRadius = 9;        // Outer edge of ring
+  const ringThickness = 1.5;    // Thin ring stroke
+  const innerRadius = outerRadius - ringThickness;
+  const eventHorizon = 2.5;     // Dark center
+  const diskHeight = 2;         // Horizontal accretion disk thickness
+  const diskExtend = 10;        // How far disk extends beyond ring
+  
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const dx = x - size / 2;
-      const dy = y - size / 2;
+      const dx = x - cx;
+      const dy = y - cy;
       const dist = Math.sqrt(dx * dx + dy * dy);
       const idx = (y * size + x) * 4;
       
-      if (dist < size / 3) {
-        canvas[idx] = 255;
-        canvas[idx + 1] = 255;
-        canvas[idx + 2] = 255;
-        canvas[idx + 3] = 255;
-      } else {
-        canvas[idx] = 0;
-        canvas[idx + 1] = 0;
-        canvas[idx + 2] = 0;
-        canvas[idx + 3] = 0;
+      let alpha = 0;
+      
+      // 1. Horizontal accretion disk (full width band through middle)
+      if (Math.abs(dy) <= diskHeight && Math.abs(dx) <= diskExtend) {
+        // Skip the event horizon center
+        if (dist > eventHorizon) {
+          alpha = 255;
+        }
       }
+      
+      // 2. Outer ring (thin stroke)
+      if (dist >= innerRadius && dist <= outerRadius) {
+        alpha = 255;
+      }
+      
+      // 3. Event horizon stays dark (already 0)
+      if (dist <= eventHorizon) {
+        alpha = 0;
+      }
+      
+      // Template image: white with alpha
+      canvas[idx] = 255;
+      canvas[idx + 1] = 255;
+      canvas[idx + 2] = 255;
+      canvas[idx + 3] = alpha;
     }
   }
   
-  return nativeImage.createFromBuffer(canvas, { width: size, height: size });
+  const image = nativeImage.createFromBuffer(canvas, { width: size, height: size });
+  image.setTemplateImage(true);
+  return image;
 }
 
 /**
@@ -368,13 +421,72 @@ function updateTrayMenu() {
     },
     { type: 'separator' },
     {
+      label: 'Check for Updates...',
+      click: async () => {
+        await checkForUpdates(true);
+      },
+    },
+    {
       label: 'About Rift',
       click: showAboutDialog,
     },
     {
+      label: 'Copy Diagnostics',
+      click: () => {
+        const diagnostics = collectDiagnostics();
+        clipboard.writeText(diagnostics);
+        dialog.showMessageBox({
+          type: 'info',
+          title: 'Diagnostics Copied',
+          message: 'System diagnostics copied to clipboard.',
+          detail: 'You can paste this into a GitHub issue or support request.',
+          buttons: ['OK'],
+        });
+      },
+    },
+    { type: 'separator' },
+    {
       label: 'Quit Rift',
       accelerator: 'CmdOrCtrl+Q',
       click: () => {
+        app.quit();
+      },
+    },
+  ]);
+
+  tray.setContextMenu(contextMenu);
+}
+
+/**
+ * Build minimal tray menu showing download progress
+ */
+function updateTrayMenuDownloading(modelName: string, downloadedMb: number, totalMb: number) {
+  if (!tray) return;
+
+  const progressText = totalMb > 0 
+    ? `Downloading ${modelName}... (${downloadedMb}/${totalMb} MB)`
+    : `Downloading ${modelName}...`;
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: progressText,
+      enabled: false,
+    },
+    { type: 'separator' },
+    {
+      label: 'This may take a few minutes',
+      enabled: false,
+    },
+    {
+      label: 'Models are downloaded once on first launch',
+      enabled: false,
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit Rift',
+      accelerator: 'CmdOrCtrl+Q',
+      click: () => {
+        modelDownloadService.cancelDownload();
         app.quit();
       },
     },

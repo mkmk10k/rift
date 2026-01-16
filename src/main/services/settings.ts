@@ -7,6 +7,7 @@ export interface AppSettings {
   launchAtLogin: boolean;
   setupComplete: boolean;
   pythonPath: string | null;
+  modelsDownloaded: boolean;
   // Streaming STT settings
   showLivePreview: boolean;
   livePasteMode: boolean;
@@ -48,6 +49,7 @@ const defaults: AppSettings = {
   launchAtLogin: false,
   setupComplete: false,
   pythonPath: null,
+  modelsDownloaded: false,
   // Streaming defaults - ON for magical experience
   showLivePreview: true,     // Show transcription as you speak
   livePasteMode: true,       // Words appear as you speak

@@ -1215,3 +1215,20 @@ export function getLLMTestSummary() {
     },
   };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RE-EXPORTS FOR TTS TRANSFORM AND CONTEXT DETECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+// These are defined in tts-transform-scenarios.ts but re-exported here for 
+// consolidated access to all LLM-related test scenarios.
+
+export {
+  getTTSTransformScenarios,
+  getTTSTransformScenariosByType,
+  getContextDetectionScenarios,
+  detectSpeechMode,
+  getTTSTransformTestSummary,
+  type TTSTransformScenario,
+  type ContextDetectionScenario,
+  type AppContext,
+} from './tts-transform-scenarios';

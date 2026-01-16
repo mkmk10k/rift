@@ -1,36 +1,202 @@
-import { spawn, execSync } from 'child_process';
-import { app, dialog, BrowserWindow } from 'electron';
+import { execSync } from 'child_process';
+import { app, dialog, BrowserWindow, clipboard, shell } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { getSetting, setSetting } from '../services/settings';
 
-const PYTHON_PATHS = [
-  '/opt/homebrew/bin/python3.11',  // Apple Silicon Homebrew
-  '/opt/homebrew/bin/python3',
-  '/usr/local/bin/python3.11',     // Intel Homebrew
-  '/usr/local/bin/python3',
-  '/usr/bin/python3',              // System Python
-];
-
-export function findPythonPath(): string | null {
-  // Check cached path first
-  const cachedPath = getSetting('pythonPath');
-  if (cachedPath && fs.existsSync(cachedPath)) {
-    return cachedPath;
+/**
+ * Collect comprehensive system diagnostics for troubleshooting.
+ * This gives users something they can copy/paste when reporting issues.
+ */
+export function collectDiagnostics(): string {
+  const lines: string[] = [];
+  
+  lines.push('=== RIFT DIAGNOSTICS ===');
+  lines.push(`Timestamp: ${new Date().toISOString()}`);
+  lines.push(`App Version: ${app.getVersion()}`);
+  lines.push(`Packaged: ${app.isPackaged}`);
+  lines.push('');
+  
+  // System info
+  lines.push('--- SYSTEM ---');
+  lines.push(`macOS: ${os.release()} (${os.arch()})`);
+  lines.push(`CPU: ${os.cpus()[0]?.model || 'Unknown'}`);
+  lines.push(`RAM: ${Math.round(os.totalmem() / 1024 / 1024 / 1024)}GB`);
+  lines.push(`Free RAM: ${Math.round(os.freemem() / 1024 / 1024 / 1024)}GB`);
+  lines.push('');
+  
+  // Python bundle info
+  lines.push('--- PYTHON BUNDLE ---');
+  const bundledPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'python', 'bin', 'python3.11')
+    : path.join(__dirname, '../../../python-bundle/bin/python3.11');
+  
+  lines.push(`Expected path: ${bundledPath}`);
+  lines.push(`Exists: ${fs.existsSync(bundledPath)}`);
+  
+  if (fs.existsSync(bundledPath)) {
+    try {
+      const version = execSync(`"${bundledPath}" --version 2>&1`, { timeout: 5000 }).toString().trim();
+      lines.push(`Version: ${version}`);
+    } catch (e) {
+      lines.push(`Version: ERROR - ${e instanceof Error ? e.message : String(e)}`);
+    }
+    
+    // Check each package (use pip show to avoid import which triggers Metal GPU init)
+    const packages = ['mlx', 'mlx-lm', 'parakeet-mlx', 'kokoro', 'huggingface_hub'];
+    lines.push('');
+    lines.push('--- PACKAGE STATUS ---');
+    for (const pkg of packages) {
+      try {
+        const output = execSync(`"${bundledPath}" -m pip show ${pkg} 2>/dev/null | grep -E "^Version:"`, {
+          timeout: 5000,
+          encoding: 'utf-8',
+        });
+        const version = output.trim().replace('Version: ', '');
+        lines.push(`${pkg}: OK (${version})`);
+      } catch {
+        lines.push(`${pkg}: MISSING/FAILED`);
+      }
+    }
   }
+  lines.push('');
+  
+  // App paths
+  lines.push('--- PATHS ---');
+  lines.push(`Resources: ${process.resourcesPath}`);
+  lines.push(`User Data: ${app.getPath('userData')}`);
+  lines.push(`App Path: ${app.getAppPath()}`);
+  lines.push('');
+  
+  // Settings
+  lines.push('--- SETTINGS ---');
+  lines.push(`Python Path (cached): ${getSetting('pythonPath') || 'Not set'}`);
+  lines.push(`Setup Complete: ${getSetting('setupComplete') || false}`);
+  lines.push('');
+  
+  // Check for common issues
+  lines.push('--- ISSUE CHECKS ---');
+  
+  // Check if running under Rosetta
+  try {
+    const archCheck = execSync('sysctl -n sysctl.proc_translated 2>/dev/null || echo 0').toString().trim();
+    if (archCheck === '1') {
+      lines.push('WARNING: Running under Rosetta (x86 translation)');
+      lines.push('  MLX requires native ARM - app may not work correctly');
+    } else {
+      lines.push('Native ARM: OK');
+    }
+  } catch {
+    lines.push('Native ARM: Unable to check');
+  }
+  
+  // Check Gatekeeper quarantine
+  if (app.isPackaged) {
+    try {
+      const appPath = app.getPath('exe').replace('/Contents/MacOS/Rift', '');
+      const xattr = execSync(`xattr "${appPath}" 2>&1 || true`).toString();
+      if (xattr.includes('com.apple.quarantine')) {
+        lines.push('WARNING: App is quarantined by Gatekeeper');
+        lines.push('  Run: xattr -cr /Applications/Rift.app');
+      } else {
+        lines.push('Gatekeeper: OK (not quarantined)');
+      }
+    } catch {
+      lines.push('Gatekeeper: Unable to check');
+    }
+  }
+  
+  lines.push('');
+  lines.push('=== END DIAGNOSTICS ===');
+  
+  return lines.join('\n');
+}
 
-  // Search common paths
+/**
+ * Show error dialog with diagnostics that user can copy.
+ */
+async function showErrorWithDiagnostics(
+  title: string,
+  message: string,
+  detail: string
+): Promise<void> {
+  const diagnostics = collectDiagnostics();
+  
+  const result = await dialog.showMessageBox({
+    type: 'error',
+    title,
+    message,
+    detail: `${detail}\n\nClick "Copy Diagnostics" to copy troubleshooting info you can share.`,
+    buttons: ['Copy Diagnostics', 'OK'],
+  });
+  
+  if (result.response === 0) {
+    clipboard.writeText(diagnostics);
+    
+    // Show confirmation and offer to open GitHub issues
+    const followUp = await dialog.showMessageBox({
+      type: 'info',
+      title: 'Diagnostics Copied',
+      message: 'Diagnostics copied to clipboard!',
+      detail: 'You can now paste this into a GitHub issue or send to support.',
+      buttons: ['Open GitHub Issues', 'OK'],
+    });
+    
+    if (followUp.response === 0) {
+      shell.openExternal('https://github.com/mkmk10k/rift/issues/new');
+    }
+  }
+}
+
+/**
+ * Get the path to the bundled Python executable.
+ * 
+ * In production: The Python bundle is in Resources/python/
+ * In development: Falls back to system Python for now
+ */
+function getBundledPythonPath(): string | null {
+  if (app.isPackaged) {
+    // Production: use bundled Python
+    const bundledPath = path.join(process.resourcesPath, 'python', 'bin', 'python3.11');
+    if (fs.existsSync(bundledPath)) {
+      return bundledPath;
+    }
+    console.error('[Python] Bundled Python not found at:', bundledPath);
+    return null;
+  } else {
+    // Development: check for local python-bundle first, then fall back to system
+    const devBundlePath = path.join(__dirname, '../../../python-bundle/bin/python3.11');
+    if (fs.existsSync(devBundlePath)) {
+      return devBundlePath;
+    }
+    
+    // Fall back to system Python for development
+    return findSystemPython();
+  }
+}
+
+/**
+ * Fall back to system Python (for development only).
+ */
+function findSystemPython(): string | null {
+  const PYTHON_PATHS = [
+    '/opt/homebrew/bin/python3.11',  // Apple Silicon Homebrew
+    '/opt/homebrew/bin/python3',
+    '/usr/local/bin/python3.11',     // Intel Homebrew
+    '/usr/local/bin/python3',
+    '/usr/bin/python3',              // System Python
+  ];
+
   for (const pythonPath of PYTHON_PATHS) {
     if (fs.existsSync(pythonPath)) {
       try {
-        // Verify it's actually Python 3.9+
         const version = execSync(`${pythonPath} --version 2>&1`).toString().trim();
         const match = version.match(/Python (\d+)\.(\d+)/);
         if (match) {
           const major = parseInt(match[1]);
           const minor = parseInt(match[2]);
           if (major >= 3 && minor >= 9) {
-            setSetting('pythonPath', pythonPath);
             return pythonPath;
           }
         }
@@ -44,7 +210,6 @@ export function findPythonPath(): string | null {
   try {
     const whichResult = execSync('which python3').toString().trim();
     if (whichResult && fs.existsSync(whichResult)) {
-      setSetting('pythonPath', whichResult);
       return whichResult;
     }
   } catch {
@@ -55,12 +220,46 @@ export function findPythonPath(): string | null {
 }
 
 /**
+ * Get the Python path to use for the app.
+ * In production: ALWAYS use bundled Python (ignore cache)
+ * In development: Use cache or find system Python
+ */
+export function findPythonPath(): string | null {
+  // In production, ALWAYS use bundled Python - ignore any cached settings
+  if (app.isPackaged) {
+    const bundledPath = getBundledPythonPath();
+    if (bundledPath) {
+      // Update cache to bundled path (clears any old system Python path)
+      setSetting('pythonPath', bundledPath);
+      return bundledPath;
+    }
+    // Bundled Python missing in production - critical error
+    console.error('[Python] Bundled Python not found in packaged app');
+    return null;
+  }
+
+  // Development: check cached path first
+  const cachedPath = getSetting('pythonPath');
+  if (cachedPath && fs.existsSync(cachedPath)) {
+    return cachedPath;
+  }
+
+  // Get bundled or system Python
+  const pythonPath = getBundledPythonPath();
+  if (pythonPath) {
+    setSetting('pythonPath', pythonPath);
+  }
+  
+  return pythonPath;
+}
+
+/**
  * Check if core MLX dependencies for STT are installed.
- * These are required for the Parakeet speech-to-text model.
+ * With bundled Python, this should always return true.
  */
 export function checkMLXInstalled(pythonPath: string): boolean {
   try {
-    execSync(`${pythonPath} -c "import mlx_audio; import parakeet_mlx"`, {
+    execSync(`"${pythonPath}" -c "import mlx; import parakeet_mlx"`, {
       timeout: 10000,
       stdio: 'pipe',
     });
@@ -71,17 +270,12 @@ export function checkMLXInstalled(pythonPath: string): boolean {
 }
 
 /**
- * Check if LLM dependencies are installed (optional, for Live Paste enhancement).
- * These are used for intelligent text processing via Qwen3.
- * 
- * FEATURES ENABLED:
- * - Phase 2: Intelligent text merge when anchor detection fails
- * - Phase 3: Rolling sentence correction during speech
- * - Phase 4: Final polish when recording stops
+ * Check if LLM dependencies are installed.
+ * With bundled Python, this should always return true.
  */
 export function checkLLMInstalled(pythonPath: string): boolean {
   try {
-    execSync(`${pythonPath} -c "import mlx_lm"`, {
+    execSync(`"${pythonPath}" -c "import mlx_lm"`, {
       timeout: 10000,
       stdio: 'pipe',
     });
@@ -91,60 +285,29 @@ export function checkLLMInstalled(pythonPath: string): boolean {
   }
 }
 
-export async function installMLXDependencies(
-  pythonPath: string,
-  onProgress?: (message: string) => void
-): Promise<{ success: boolean; error?: string }> {
-  return new Promise((resolve) => {
-    const requirementsPath = app.isPackaged
-      ? path.join(process.resourcesPath, 'python', 'requirements.txt')
-      : path.join(__dirname, '../../../python/requirements.txt');
-
-    if (!fs.existsSync(requirementsPath)) {
-      resolve({ success: false, error: `Requirements file not found: ${requirementsPath}` });
-      return;
-    }
-
-    onProgress?.('Installing MLX dependencies (this may take a few minutes)...');
-
-    const pip = spawn(pythonPath, ['-m', 'pip', 'install', '-r', requirementsPath, '--upgrade'], {
-      stdio: ['ignore', 'pipe', 'pipe'],
+/**
+ * Check if TTS dependencies are installed.
+ * With bundled Python, this should always return true.
+ */
+export function checkTTSInstalled(pythonPath: string): boolean {
+  try {
+    execSync(`"${pythonPath}" -c "import kokoro"`, {
+      timeout: 10000,
+      stdio: 'pipe',
     });
-
-    let stdout = '';
-    let stderr = '';
-
-    pip.stdout?.on('data', (data) => {
-      const line = data.toString();
-      stdout += line;
-      // Send progress updates for package installations
-      const match = line.match(/Installing collected packages: (.+)/);
-      if (match) {
-        onProgress?.(`Installing: ${match[1].split(',')[0].trim()}...`);
-      }
-    });
-
-    pip.stderr?.on('data', (data) => {
-      stderr += data.toString();
-    });
-
-    pip.on('close', (code) => {
-      if (code === 0) {
-        resolve({ success: true });
-      } else {
-        resolve({ 
-          success: false, 
-          error: `pip install failed (exit code ${code}): ${stderr || stdout}` 
-        });
-      }
-    });
-
-    pip.on('error', (err) => {
-      resolve({ success: false, error: `Failed to run pip: ${err.message}` });
-    });
-  });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
+/**
+ * Run setup check on app startup.
+ * 
+ * With bundled Python, this is simplified:
+ * - In production: Just verify bundled Python exists and works
+ * - In development: Check for system Python and optionally prompt to install deps
+ */
 export async function runSetupCheck(mainWindow: BrowserWindow | null): Promise<boolean> {
   // Skip if setup already complete
   if (getSetting('setupComplete')) {
@@ -158,103 +321,66 @@ export async function runSetupCheck(mainWindow: BrowserWindow | null): Promise<b
 
   console.log('[Setup] Running first-launch setup check...');
 
-  // Step 1: Find Python
+  // Find Python (bundled in production, system in development)
   const pythonPath = findPythonPath();
+  
   if (!pythonPath) {
-    const result = await dialog.showMessageBox({
-      type: 'error',
-      title: 'Python Not Found',
-      message: 'Outloud requires Python 3.9 or higher.',
-      detail: 'Please install Python using Homebrew:\n\nbrew install python@3.11\n\nThen restart Outloud.',
-      buttons: ['Open Homebrew Guide', 'Quit'],
-    });
-
-    if (result.response === 0) {
-      const { shell } = require('electron');
-      shell.openExternal('https://brew.sh');
+    // This should only happen in development if no system Python found
+    if (!app.isPackaged) {
+      await dialog.showMessageBox({
+        type: 'error',
+        title: 'Python Not Found',
+        message: 'Development mode requires Python 3.9+',
+        detail: 'Please install Python using Homebrew:\n\nbrew install python@3.11\n\nThen restart the app.',
+        buttons: ['OK'],
+      });
+      return false;
     }
     
+    // In production, this means the bundled Python is missing - critical error
+    console.error('[Setup] CRITICAL: Bundled Python not found!');
+    await showErrorWithDiagnostics(
+      'Installation Issue',
+      'Required components are missing.',
+      'The bundled Python runtime was not found. This usually means the app installation is incomplete or corrupted.\n\nPlease re-download Rift from myrift.dev.'
+    );
     return false;
   }
 
-  console.log(`[Setup] Found Python at: ${pythonPath}`);
+  console.log(`[Setup] Using Python at: ${pythonPath}`);
 
-  // Step 2: Check MLX dependencies
+  // Verify MLX dependencies
   if (checkMLXInstalled(pythonPath)) {
-    console.log('[Setup] MLX dependencies already installed');
+    console.log('[Setup] All dependencies verified');
     setSetting('setupComplete', true);
     return true;
   }
 
-  // Step 3: Ask user to install dependencies
-  const installResult = await dialog.showMessageBox({
+  // Dependencies not found - this shouldn't happen with bundled Python
+  if (app.isPackaged) {
+    console.error('[Setup] CRITICAL: Bundled Python is missing MLX dependencies!');
+    await showErrorWithDiagnostics(
+      'Installation Issue', 
+      'Machine learning components failed to load.',
+      'The bundled MLX packages could not be imported. This may indicate:\n\n• Corrupted installation\n• Running on Intel Mac (MLX requires Apple Silicon)\n• System security blocking access'
+    );
+    return false;
+  }
+
+  // Development only: offer to install dependencies
+  console.log('[Setup] Development mode - dependencies not installed');
+  const result = await dialog.showMessageBox({
     type: 'question',
-    title: 'Outloud Setup',
+    title: 'Development Setup',
     message: 'MLX dependencies need to be installed.',
-    detail: 'Outloud needs to install some Python packages for local speech processing.\n\nThis will take 1-3 minutes and requires internet.',
-    buttons: ['Install Now', 'Quit'],
-    defaultId: 0,
+    detail: 'Run one of these commands:\n\n• bun run bundle:python  (recommended)\n• pip3 install -r python/requirements.txt',
+    buttons: ['OK', 'Quit'],
   });
 
-  if (installResult.response !== 0) {
+  if (result.response === 1) {
     return false;
   }
 
-  // Step 4: Install dependencies with progress
-  const progressResult = await installMLXDependencies(pythonPath, (message) => {
-    console.log(`[Setup] ${message}`);
-    // Could send to renderer for UI display
-    mainWindow?.webContents.send('setup:progress', message);
-  });
-
-  if (!progressResult.success) {
-    await dialog.showMessageBox({
-      type: 'error',
-      title: 'Installation Failed',
-      message: 'Failed to install dependencies.',
-      detail: progressResult.error,
-      buttons: ['OK'],
-    });
-    return false;
-  }
-
-  // Step 5: Verify installation
-  if (checkMLXInstalled(pythonPath)) {
-    setSetting('setupComplete', true);
-    console.log('[Setup] Core setup complete!');
-    
-    // Step 6: Check LLM dependencies (optional enhancement)
-    // These enable AI-powered text enhancement for Live Paste
-    // If not installed, Live Paste still works with heuristics
-    if (!checkLLMInstalled(pythonPath)) {
-      console.log('[Setup] Installing LLM dependencies for AI-enhanced Live Paste...');
-      mainWindow?.webContents.send('setup:progress', 'Installing AI enhancement modules...');
-      
-      // LLM dependencies are in the same requirements.txt
-      // They'll be installed as part of the pip install
-      // If they fail, Live Paste still works (just without LLM)
-    }
-    
-    await dialog.showMessageBox({
-      type: 'info',
-      title: 'Setup Complete',
-      message: 'Outloud is ready to use!',
-      detail: 'Shortcuts:\n• ⌃1 - Read selected text\n• ⌃2 - Voice dictation\n• ⌃3 - Pause & Hide\n\nAI-enhanced dictation enabled!',
-      buttons: ['Get Started'],
-    });
-    
-    return true;
-  } else {
-    await dialog.showMessageBox({
-      type: 'error',
-      title: 'Setup Failed',
-      message: 'Dependencies were installed but verification failed.',
-      detail: 'Please try restarting Outloud or check the console for errors.',
-      buttons: ['OK'],
-    });
-    return false;
-  }
+  // Let them continue anyway (they might have just installed)
+  return checkMLXInstalled(pythonPath);
 }
-
-
-

@@ -45,6 +45,13 @@ import {
   listDetectionScenarios,
   getLLMTestSummary,
 } from './llm-scenarios';
+import {
+  TTSTransformScenario,
+  ContextDetectionScenario,
+  ttsTransformScenarios,
+  contextDetectionScenarios,
+  getTTSTransformTestSummary,
+} from './tts-transform-scenarios';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -60,9 +67,13 @@ const LATENCY_THRESHOLD_MERGE = 800;    // Phase 2: allows for adaptive retry (2
 const LATENCY_THRESHOLD_CORRECT = 500;  // Phase 3: fast model only
 const LATENCY_THRESHOLD_POLISH = 5000;  // Phase 4: now using 4B model for better quality
 const LATENCY_THRESHOLD_DEEP = 10000;   // Deep cleanup: 4B model, can take longer
+const LATENCY_THRESHOLD_TTS_TRANSFORM = 12000;  // TTS transform: 4B model, allow up to 12s for complex transforms
 
 // Environment variable to enable/disable deep cleanup tests (disabled by default due to memory)
 const RUN_DEEP_CLEANUP_TESTS = process.env.RUN_DEEP_CLEANUP === '1';
+
+// Environment variable to enable/disable TTS transform tests (enabled by default)
+const RUN_TTS_TRANSFORM_TESTS = process.env.SKIP_TTS_TRANSFORM !== '1';
 
 // Similarity threshold for fuzzy matching (0-1)
 // Note: LLM outputs may vary in wording but preserve meaning
@@ -107,6 +118,37 @@ interface LLMTestReport {
     totalFailed: number;
     passRate: number;
   };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TTS TRANSFORM / CODE TALK RESULT TYPES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface TTSTransformResult {
+  id: string;
+  name: string;
+  passed: boolean;
+  latencyMs: number;
+  latencyExceeded: boolean;
+  input: string;
+  transformed: string;
+  conceptsPreserved: string[];
+  conceptsMissing: string[];
+  patternsFound: string[];
+  patternsMissing: string[];
+  forbiddenFound: string[];
+  wordRatio: number;
+  ratioValid: boolean;
+  error?: string;
+}
+
+interface ContextDetectionResult {
+  id: string;
+  name: string;
+  passed: boolean;
+  context: { appName: string; windowTitle: string; url: string };
+  expectedMode: string;
+  actualMode: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -305,6 +347,27 @@ class LLMServerWrapper {
       sentence,
       checksum,
       gpu_busy: false,
+    });
+  }
+
+  /**
+   * Transform text for TTS (Code Talk feature)
+   */
+  async transformForTTS(text: string, mode: string = 'developer'): Promise<{
+    type: string;
+    transformed?: string;
+    original?: string;
+    mode?: string;
+    skipped?: boolean;
+    reason?: string;
+    inference_time_ms?: number;
+    word_ratio?: number;
+    error?: string;
+  }> {
+    return this.send({
+      action: 'transform_for_tts',
+      text,
+      mode,
     });
   }
 
@@ -776,6 +839,148 @@ async function runDeepCleanupTest(scenario: DeepCleanupTestScenario): Promise<Te
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// CODE TALK / TTS TRANSFORM TESTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Import the detectSpeechMode function for context detection tests.
+ * This function is PURE and can be tested without AppleScript.
+ * Import from context-detection.ts to avoid Electron dependencies.
+ */
+import { detectSpeechMode, AppContext, TTSSpeechMode } from '../src/main/ipc/context-detection';
+
+/**
+ * Run a single TTS transform test
+ */
+async function runTTSTransformTest(scenario: TTSTransformScenario): Promise<TTSTransformResult> {
+  const server = await getServer();
+
+  try {
+    const response = await server.transformForTTS(scenario.input, scenario.mode);
+
+    if (response.type === 'error' || response.skipped) {
+      return {
+        id: scenario.id,
+        name: scenario.name,
+        passed: false,
+        latencyMs: response.inference_time_ms || 0,
+        latencyExceeded: false,
+        input: scenario.input,
+        transformed: response.transformed || '',
+        conceptsPreserved: [],
+        conceptsMissing: scenario.mustPreserve,
+        patternsFound: [],
+        patternsMissing: scenario.expectedPatterns,
+        forbiddenFound: [],
+        wordRatio: 0,
+        ratioValid: false,
+        error: response.error || response.reason || 'Unknown error',
+      };
+    }
+
+    const transformed = (response.transformed || '').toLowerCase();
+    const latencyMs = response.inference_time_ms || 0;
+    const latencyExceeded = latencyMs > LATENCY_THRESHOLD_TTS_TRANSFORM;
+
+    // Check concept preservation (case-insensitive)
+    const conceptsPreserved: string[] = [];
+    const conceptsMissing: string[] = [];
+    for (const concept of scenario.mustPreserve) {
+      if (transformed.includes(concept.toLowerCase())) {
+        conceptsPreserved.push(concept);
+      } else {
+        conceptsMissing.push(concept);
+      }
+    }
+
+    // Check expected patterns
+    const patternsFound: string[] = [];
+    const patternsMissing: string[] = [];
+    for (const pattern of scenario.expectedPatterns) {
+      if (transformed.includes(pattern.toLowerCase())) {
+        patternsFound.push(pattern);
+      } else {
+        patternsMissing.push(pattern);
+      }
+    }
+
+    // Check forbidden patterns
+    const forbiddenFound: string[] = [];
+    const forbiddenPatterns = scenario.forbiddenPatterns || [];
+    for (const forbidden of forbiddenPatterns) {
+      if (transformed.includes(forbidden.toLowerCase())) {
+        forbiddenFound.push(forbidden);
+      }
+    }
+
+    // Check word ratio
+    const inputWords = scenario.input.split(/\s+/).length;
+    const outputWords = (response.transformed || '').split(/\s+/).length;
+    const wordRatio = outputWords / Math.max(inputWords, 1);
+    const maxRatio = scenario.maxExpansionRatio || 3.0;  // Default: allow 3x expansion for natural speech
+    const ratioValid = wordRatio <= maxRatio && wordRatio >= 0.3;
+
+    // Pass if: concepts preserved, no forbidden patterns, valid ratio
+    // Expected patterns are nice-to-have but not required for pass
+    const conceptsOk = conceptsMissing.length === 0;
+    const forbiddenOk = forbiddenFound.length === 0;
+    const passed = conceptsOk && forbiddenOk && ratioValid && !latencyExceeded;
+
+    return {
+      id: scenario.id,
+      name: scenario.name,
+      passed,
+      latencyMs,
+      latencyExceeded,
+      input: scenario.input,
+      transformed: response.transformed || '',
+      conceptsPreserved,
+      conceptsMissing,
+      patternsFound,
+      patternsMissing,
+      forbiddenFound,
+      wordRatio,
+      ratioValid,
+    };
+  } catch (err: any) {
+    return {
+      id: scenario.id,
+      name: scenario.name,
+      passed: false,
+      latencyMs: 0,
+      latencyExceeded: false,
+      input: scenario.input,
+      transformed: '',
+      conceptsPreserved: [],
+      conceptsMissing: scenario.mustPreserve,
+      patternsFound: [],
+      patternsMissing: scenario.expectedPatterns,
+      forbiddenFound: [],
+      wordRatio: 0,
+      ratioValid: false,
+      error: err.message,
+    };
+  }
+}
+
+/**
+ * Run a single context detection test (pure function, no LLM needed)
+ */
+function runContextDetectionTest(scenario: ContextDetectionScenario): ContextDetectionResult {
+  const actualMode = detectSpeechMode(scenario.context);
+  const passed = actualMode === scenario.expectedMode;
+
+  return {
+    id: scenario.id,
+    name: scenario.name,
+    passed,
+    context: scenario.context,
+    expectedMode: scenario.expectedMode,
+    actualMode,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // MAIN ENTRY POINT
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -959,6 +1164,70 @@ async function runAllTests(): Promise<LLMTestReport> {
   } else {
     console.log('\n─────────────────────────────────────────────────────────────');
     console.log('DEEP CLEANUP: SKIPPED (set RUN_DEEP_CLEANUP=1 to enable)');
+    console.log('─────────────────────────────────────────────────────────────\n');
+  }
+
+  // Run Context Detection tests (pure function, no LLM needed)
+  console.log('\n─────────────────────────────────────────────────────────────');
+  console.log('CONTEXT DETECTION (Code Talk Mode Detection)');
+  console.log('─────────────────────────────────────────────────────────────\n');
+
+  const contextResults: ContextDetectionResult[] = [];
+  for (const scenario of contextDetectionScenarios) {
+    const result = runContextDetectionTest(scenario);
+    contextResults.push(result);
+    
+    const status = result.passed ? '✅' : '❌';
+    console.log(`${status} ${scenario.id}: ${scenario.name}`);
+    
+    if (!result.passed) {
+      console.log(`   App: ${result.context.appName}`);
+      console.log(`   Expected: ${result.expectedMode}, Got: ${result.actualMode}`);
+    }
+  }
+
+  const ctxPassed = contextResults.filter(r => r.passed).length;
+  console.log(`\n  Context detection: ${ctxPassed}/${contextResults.length} passed`);
+
+  // Run TTS Transform tests (Code Talk)
+  const ttsTransformResults: TTSTransformResult[] = [];
+  
+  if (RUN_TTS_TRANSFORM_TESTS) {
+    console.log('\n─────────────────────────────────────────────────────────────');
+    console.log('TTS TRANSFORM (Code Talk Feature)');
+    console.log('─────────────────────────────────────────────────────────────\n');
+
+    for (const scenario of ttsTransformScenarios) {
+      const result = await runTTSTransformTest(scenario);
+      ttsTransformResults.push(result);
+      
+      const status = result.passed ? '✅' : '❌';
+      const latencyInfo = result.latencyExceeded ? ` ⚠️ ${result.latencyMs}ms` : ` ${result.latencyMs}ms`;
+      console.log(`${status} ${scenario.id}: ${scenario.name}${latencyInfo}`);
+      
+      if (!result.passed) {
+        if (result.conceptsMissing.length > 0) {
+          console.log(`   Missing concepts: ${result.conceptsMissing.join(', ')}`);
+        }
+        if (result.forbiddenFound.length > 0) {
+          console.log(`   Forbidden found: ${result.forbiddenFound.join(', ')}`);
+        }
+        if (!result.ratioValid) {
+          console.log(`   Word ratio: ${result.wordRatio.toFixed(2)} (max: ${scenario.maxExpansionRatio || 3.0})`);
+        }
+        if (result.error) {
+          console.log(`   Error: ${result.error}`);
+        }
+        console.log(`   Input: "${result.input.substring(0, 60)}..."`);
+        console.log(`   Output: "${result.transformed.substring(0, 60)}..."`);
+      }
+    }
+
+    const ttsPassed = ttsTransformResults.filter(r => r.passed).length;
+    console.log(`\n  TTS transform: ${ttsPassed}/${ttsTransformResults.length} passed`);
+  } else {
+    console.log('\n─────────────────────────────────────────────────────────────');
+    console.log('TTS TRANSFORM: SKIPPED (set SKIP_TTS_TRANSFORM=0 to enable)');
     console.log('─────────────────────────────────────────────────────────────\n');
   }
 

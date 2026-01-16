@@ -66,7 +66,7 @@ function checkFfmpeg(): boolean {
 }
 
 /**
- * Find Python 3.11 path - tries multiple locations
+ * Find Python path - prioritizes bundled Python in production
  * Lazily evaluated to avoid issues at module load time
  */
 let _pythonPath: string | null = null;
@@ -74,6 +74,26 @@ let _pythonPath: string | null = null;
 function getPythonPath(): string {
   if (_pythonPath) return _pythonPath;
   
+  // In production, ALWAYS use bundled Python
+  if (app.isPackaged) {
+    const bundledPath = path.join(process.resourcesPath, 'python', 'bin', 'python3.11');
+    if (fs.existsSync(bundledPath)) {
+      console.log('[Rift] Using bundled Python:', bundledPath);
+      _pythonPath = bundledPath;
+      return _pythonPath;
+    }
+    console.error('[Rift] CRITICAL: Bundled Python not found at:', bundledPath);
+  }
+  
+  // Development: check for local bundle first
+  const devBundlePath = path.join(__dirname, '../../../../python-bundle/bin/python3.11');
+  if (fs.existsSync(devBundlePath)) {
+    console.log('[Rift] Using dev bundle Python:', devBundlePath);
+    _pythonPath = devBundlePath;
+    return _pythonPath;
+  }
+  
+  // Fallback to system Python (development only)
   const possiblePaths = [
     '/opt/homebrew/bin/python3.11',  // Apple Silicon Homebrew
     '/usr/local/bin/python3.11',      // Intel Mac Homebrew
@@ -158,7 +178,7 @@ class TTSServer {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error('TTS Server startup timeout'));
-      }, 30000); // 30s for model loading
+      }, 60000); // 60s for model loading + warmup
 
       const checkReady = () => {
         if (this.modelLoaded) {
@@ -545,6 +565,123 @@ class TTSServer {
 
 // Global TTS server instance
 const ttsServer = new TTSServer();
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CODE TALK - Context Detection for Smart TTS Transform
+// ═══════════════════════════════════════════════════════════════════════════════
+
+import { detectSpeechMode, type AppContext, type TTSSpeechMode } from './context-detection';
+
+// Re-export for tests (also exported from context-detection.ts directly)
+export { detectSpeechMode, type AppContext, type TTSSpeechMode };
+
+/**
+ * Get the active application context using AppleScript.
+ * Returns app name, window title, and browser URL if applicable.
+ */
+async function getActiveContext(): Promise<AppContext> {
+  return new Promise((resolve) => {
+    const script = `
+      set appName to ""
+      set windowTitle to ""
+      set pageURL to ""
+      
+      tell application "System Events"
+        try
+          set frontApp to first application process whose frontmost is true
+          set appName to name of frontApp
+          try
+            set windowTitle to name of front window of frontApp
+          end try
+        end try
+      end tell
+      
+      -- Get browser URL if applicable
+      if appName contains "Safari" then
+        try
+          tell application "Safari" to set pageURL to URL of current tab of front window
+        end try
+      else if appName contains "Chrome" then
+        try
+          tell application "Google Chrome" to set pageURL to URL of active tab of front window
+        end try
+      else if appName contains "Arc" then
+        try
+          tell application "Arc" to set pageURL to URL of active tab of front window
+        end try
+      else if appName contains "Firefox" then
+        try
+          -- Firefox doesn't have easy AppleScript support, use window title
+        end try
+      else if appName contains "Brave" then
+        try
+          tell application "Brave Browser" to set pageURL to URL of active tab of front window
+        end try
+      end if
+      
+      return appName & "|" & windowTitle & "|" & pageURL
+    `;
+    
+    const proc = spawn('osascript', ['-e', script]);
+    let stdout = '';
+    let stderr = '';
+    
+    proc.stdout?.on('data', (data) => { stdout += data.toString(); });
+    proc.stderr?.on('data', (data) => { stderr += data.toString(); });
+    
+    proc.on('close', (code) => {
+      if (code === 0 && stdout.trim()) {
+        const parts = stdout.trim().split('|');
+        resolve({
+          appName: parts[0] || '',
+          windowTitle: parts[1] || '',
+          url: parts[2] || '',
+        });
+      } else {
+        // Return empty context on error (will use default mode)
+        console.log('[Context] AppleScript failed:', stderr.trim());
+        resolve({ appName: '', windowTitle: '', url: '' });
+      }
+    });
+    
+    proc.on('error', (err) => {
+      console.error('[Context] AppleScript error:', err);
+      resolve({ appName: '', windowTitle: '', url: '' });
+    });
+    
+    // Timeout after 500ms to avoid blocking TTS
+    setTimeout(() => {
+      proc.kill();
+      resolve({ appName: '', windowTitle: '', url: '' });
+    }, 500);
+  });
+}
+
+/**
+ * Transform text for TTS using the LLM Code Talk feature.
+ * Called automatically before TTS when in developer mode.
+ */
+async function transformForTTS(text: string, mode: TTSSpeechMode): Promise<string> {
+  // Only transform if in developer mode and text is substantial
+  if (mode !== 'developer' || text.length < 20) {
+    return text;
+  }
+  
+  try {
+    const { llmServer } = require('../services/llmService');
+    const result = await llmServer.transformForTTS(text, mode);
+    
+    if (result && result.transformed && !result.skipped) {
+      console.log(`[Code Talk] Transformed: ${text.length} → ${result.transformed.length} chars, ${result.inference_time_ms}ms`);
+      return result.transformed;
+    }
+    
+    return text;
+  } catch (err: any) {
+    console.error('[Code Talk] Transform failed:', err.message);
+    return text; // Return original on error
+  }
+}
 
 /**
  * Persistent STT Server Manager
@@ -1231,7 +1368,8 @@ export function registerIpcHandlers() {
 
   // TTS: Realtime streaming synthesis - fastest possible start
   // Uses Kokoro's native sentence-level generator, no file I/O
-  ipcMain.handle('tts:synthesize-realtime', async (event, request: TTSRequest): Promise<{ success: boolean; error?: string }> => {
+  // CODE TALK: Automatically transforms technical content when in developer context
+  ipcMain.handle('tts:synthesize-realtime', async (event, request: TTSRequest & { codeTalk?: boolean }): Promise<{ success: boolean; error?: string; codeTalkUsed?: boolean }> => {
     // Validate text length
     if (request.text.length > TTS_MAX_CHARS) {
       console.warn(`[TTS Realtime] Text too long: ${request.text.length} chars`);
@@ -1245,17 +1383,45 @@ export function registerIpcHandlers() {
       return { success: false, error: 'Cloud TTS realtime not implemented' };
     }
 
+    let textToSpeak = request.text;
+    let codeTalkUsed = false;
+    
+    // CODE TALK: Transform technical content if enabled
+    // Only applies when explicitly enabled OR when in developer context
+    if (request.codeTalk !== false && request.text.length >= 20) {
+      try {
+        // Detect active context
+        const context = await getActiveContext();
+        const mode = detectSpeechMode(context);
+        
+        console.log(`[Code Talk] Context: ${context.appName} | Mode: ${mode}`);
+        
+        if (mode === 'developer') {
+          // Transform text for natural developer speech
+          const transformed = await transformForTTS(request.text, mode);
+          if (transformed !== request.text) {
+            textToSpeak = transformed;
+            codeTalkUsed = true;
+            console.log(`[Code Talk] Transformed: ${request.text.length} → ${transformed.length} chars`);
+          }
+        }
+      } catch (err: any) {
+        console.error('[Code Talk] Error (continuing with original text):', err.message);
+      }
+    }
+
     console.log('[TTS Realtime] Starting realtime synthesis');
-    console.log('[TTS Realtime] Text length:', request.text.length, 'chars');
+    console.log('[TTS Realtime] Text length:', textToSpeak.length, 'chars');
+    console.log('[TTS Realtime] Code Talk:', codeTalkUsed ? 'enabled' : 'disabled');
     
     const result = await ttsServer.synthesizeRealtime(
-      request.text,
+      textToSpeak,
       request.voice,
       request.speed,
       event.sender
     );
     
-    return result;
+    return { ...result, codeTalkUsed };
   });
 
   // Check if local models are available
@@ -2831,6 +2997,17 @@ export function registerIpcHandlers() {
     try {
       const { llmServer } = require('../services/llmService');
       return await llmServer.extractNewWords(pastedEnd, tailWords);
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // LLM: Transform text for TTS (Code Talk feature)
+  // Converts technical content into natural developer-speak for TTS
+  ipcMain.handle('llm:transform-for-tts', async (_, text: string, mode?: string) => {
+    try {
+      const { llmServer } = require('../services/llmService');
+      return await llmServer.transformForTTS(text, mode || 'developer');
     } catch (err: any) {
       return { success: false, error: err.message };
     }

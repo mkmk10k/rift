@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleDisplayName</key>
+    <string>Outloud Input</string>
+    <key>CFBundleExecutable</key>
+    <string>OutloudInput</string>
+    <key>CFBundleIdentifier</key>
+    <string>sh.outloud.inputmethod</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>OutloudInput</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSBackgroundOnly</key>
+    <true/>
+    <key>LSMinimumSystemVersion</key>
+    <string>12.0</string>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    
+    <!-- Input Method Configuration -->
+    <key>InputMethodConnectionName</key>
+    <string>OutloudInput</string>
+    <key>InputMethodServerControllerClass</key>
+    <string>OutloudInputController</string>
+    <key>InputMethodServerDelegateClass</key>
+    <string>AppDelegate</string>
+    
+    <!-- Tell macOS this is an input method -->
+    <key>LSUIElement</key>
+    <true/>
+    
+    <!-- Input Source configuration -->
+    <key>ComponentInputModeDict</key>
+    <dict>
+        <key>tsInputModeListKey</key>
+        <dict>
+            <key>sh.outloud.inputmethod.outloud</key>
+            <dict>
+                <key>TISInputSourceID</key>
+                <string>sh.outloud.inputmethod.outloud</string>
+                <key>TISIntendedLanguage</key>
+                <string>en</string>
+                <key>tsInputModeAlternateMenuIconFileKey</key>
+                <string>OutloudIcon</string>
+                <key>tsInputModeCharacterRepertoireKey</key>
+                <array>
+                    <string>Latn</string>
+                </array>
+                <key>tsInputModeDefaultStateKey</key>
+                <true/>
+                <key>tsInputModeIsVisibleKey</key>
+                <true/>
+                <key>tsInputModeKeyEquivalentModifiersKey</key>
+                <integer>0</integer>
+                <key>tsInputModeMenuIconFileKey</key>
+                <string>OutloudIcon</string>
+                <key>tsInputModePrimaryInScriptKey</key>
+                <true/>
+                <key>tsInputModeScriptKey</key>
+                <string>smRoman</string>
+            </dict>
+        </dict>
+    </dict>
+    
+    <!-- Required for distributed notifications -->
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Outloud Input needs to receive text injection commands.</string>
+</dict>
+</plist>
+
+

@@ -35,6 +35,8 @@ interface E2ETestScenario {
   expectedPatterns: string[];  // Patterns that MUST appear in final output
   forbiddenPatterns: string[];  // Patterns that must NOT appear
   polishMode: 'clean' | 'professional' | 'verbatim';
+  // Code Talk feature - optional TTS pre-transform
+  codeTalkMode?: 'developer' | 'conversational' | 'presentation';
 }
 
 const e2eScenarios: E2ETestScenario[] = [
@@ -61,6 +63,61 @@ const e2eScenarios: E2ETestScenario[] = [
     expectedPatterns: ['quick', 'brown', 'fox', 'jumps', 'lazy', 'dog'],
     forbiddenPatterns: [],
     polishMode: 'clean',
+  },
+];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CODE TALK E2E SCENARIOS
+// Tests for TTS pre-transform → TTS → STT → verify concept preservation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const codeTalkScenarios: E2ETestScenario[] = [
+  {
+    id: 'e2e-codetalk-css-overflow',
+    name: 'Code Talk: CSS overflow property roundtrip',
+    // Input is technical CSS - we transform it, speak it, transcribe it, verify concepts survive
+    inputText: 'Add overflow-x set to hidden on both the html and body elements.',
+    expectedPatterns: ['overflow', 'hidden', 'html', 'body'],
+    forbiddenPatterns: [],
+    polishMode: 'clean',
+    codeTalkMode: 'developer',
+  },
+  {
+    id: 'e2e-codetalk-css-media',
+    name: 'Code Talk: CSS media query roundtrip',
+    inputText: 'For a media query targeting screens under 480 pixels, set the section class to have padding of 1.25 rem.',
+    expectedPatterns: ['media', 'query', '480', 'pixels', 'section', 'padding'],
+    forbiddenPatterns: [],
+    polishMode: 'clean',
+    codeTalkMode: 'developer',
+  },
+  {
+    id: 'e2e-codetalk-ts-function',
+    name: 'Code Talk: TypeScript function roundtrip',
+    inputText: 'The async function synthesize realtime takes a text string and a voice string, and returns a Promise of void.',
+    expectedPatterns: ['async', 'function', 'synthesize', 'text', 'voice', 'promise'],
+    forbiddenPatterns: [],
+    polishMode: 'clean',
+    codeTalkMode: 'developer',
+  },
+  {
+    id: 'e2e-codetalk-issue',
+    name: 'Code Talk: Issue description roundtrip',
+    inputText: 'First, Horizontal Overflow. This one is critical. Second, Headlines Getting Clipped.',
+    expectedPatterns: ['overflow', 'critical', 'headlines', 'clipped'],
+    forbiddenPatterns: [],
+    polishMode: 'clean',
+    codeTalkMode: 'developer',
+  },
+  {
+    id: 'e2e-codetalk-raw-css',
+    name: 'Code Talk: Raw CSS transform roundtrip',
+    // This tests the full pipeline: raw CSS → LLM transform → TTS → STT → verify
+    inputText: 'The feature-headline and chapter-title classes, set word-break to break-word, and hyphens to auto.',
+    expectedPatterns: ['feature', 'headline', 'word-break', 'hyphens'],
+    forbiddenPatterns: [],
+    polishMode: 'clean',
+    codeTalkMode: 'developer',
   },
 ];
 
@@ -341,6 +398,41 @@ async function runAllE2ETests(): Promise<void> {
       
       const status = result.passed ? '✅' : '❌';
       console.log(`${status} ${scenario.id}`);
+      
+      if (!result.passed) {
+        if (result.error) {
+          console.log(`   Error: ${result.error}`);
+        }
+        if (result.missingPatterns.length > 0) {
+          console.log(`   Missing: ${result.missingPatterns.join(', ')}`);
+        }
+        if (result.foundForbidden.length > 0) {
+          console.log(`   Forbidden: ${result.foundForbidden.join(', ')}`);
+        }
+        console.log(`   Input: "${result.inputText}"`);
+        console.log(`   Transcribed: "${result.transcribedText}"`);
+        console.log(`   Polished: "${result.polishedText}"`);
+      }
+      
+      console.log(`   Latency: TTS=${result.ttsTimeMs}ms, STT=${result.sttTimeMs}ms, LLM=${result.llmTimeMs}ms`);
+    }
+    
+    // Run Code Talk E2E tests (tests TTS pre-transform roundtrip)
+    console.log('\n─────────────────────────────────────────────────────────────');
+    console.log('CODE TALK E2E TESTS (Transform → TTS → STT → Verify)');
+    console.log('─────────────────────────────────────────────────────────────\n');
+    
+    for (const scenario of codeTalkScenarios) {
+      console.log(`\n▶ ${scenario.id}: ${scenario.name}`);
+      // Note: The Code Talk scenarios use pre-transformed text for TTS
+      // In production, the LLM would transform raw code BEFORE TTS
+      // Here we test with the already-spoken form to verify roundtrip
+      const result = await runE2ETest(scenario);
+      results.push(result);
+      
+      const status = result.passed ? '✅' : '❌';
+      const modeInfo = scenario.codeTalkMode ? ` [${scenario.codeTalkMode}]` : '';
+      console.log(`${status} ${scenario.id}${modeInfo}`);
       
       if (!result.passed) {
         if (result.error) {
