@@ -1,0 +1,297 @@
+{
+  "timestamp": "2026-04-04T20:45:07.775Z",
+  "label": "design-audit",
+  "runs": [
+    {
+      "contrast": {
+        "failures": [],
+        "minRequired": 4.5
+      },
+      "fontSizes": {
+        "failures": []
+      },
+      "headingRatio": {
+        "failures": []
+      },
+      "lineHeights": {
+        "failures": []
+      },
+      "lineLengths": {
+        "failures": []
+      },
+      "summary": {
+        "checksPerformed": 56,
+        "issueCount": 0,
+        "passRate": 1
+      },
+      "theme": "light",
+      "touchTargets": {
+        "failures": []
+      },
+      "viewport": {
+        "h": 812,
+        "w": 375
+      },
+      "viewportLabel": "375x812-light"
+    },
+    {
+      "contrast": {
+        "failures": [],
+        "minRequired": 4.5
+      },
+      "fontSizes": {
+        "failures": []
+      },
+      "headingRatio": {
+        "failures": []
+      },
+      "lineHeights": {
+        "failures": []
+      },
+      "lineLengths": {
+        "failures": []
+      },
+      "summary": {
+        "checksPerformed": 56,
+        "issueCount": 0,
+        "passRate": 1
+      },
+      "theme": "light",
+      "touchTargets": {
+        "failures": []
+      },
+      "viewport": {
+        "h": 768,
+        "w": 1024
+      },
+      "viewportLabel": "1024x768-light"
+    },
+    {
+      "contrast": {
+        "failures": [],
+        "minRequired": 4.5
+      },
+      "fontSizes": {
+        "failures": []
+      },
+      "headingRatio": {
+        "failures": []
+      },
+      "lineHeights": {
+        "failures": []
+      },
+      "lineLengths": {
+        "failures": []
+      },
+      "summary": {
+        "checksPerformed": 56,
+        "issueCount": 0,
+        "passRate": 1
+      },
+      "theme": "light",
+      "touchTargets": {
+        "failures": []
+      },
+      "viewport": {
+        "h": 900,
+        "w": 1440
+      },
+      "viewportLabel": "1440x900-light"
+    },
+    {
+      "contrast": {
+        "failures": [],
+        "minRequired": 4.5
+      },
+      "fontSizes": {
+        "failures": []
+      },
+      "headingRatio": {
+        "failures": []
+      },
+      "lineHeights": {
+        "failures": []
+      },
+      "lineLengths": {
+        "failures": []
+      },
+      "summary": {
+        "checksPerformed": 56,
+        "issueCount": 0,
+        "passRate": 1
+      },
+      "theme": "dark",
+      "touchTargets": {
+        "failures": []
+      },
+      "viewport": {
+        "h": 812,
+        "w": 375
+      },
+      "viewportLabel": "375x812-dark"
+    },
+    {
+      "contrast": {
+        "failures": [],
+        "minRequired": 4.5
+      },
+      "fontSizes": {
+        "failures": []
+      },
+      "headingRatio": {
+        "failures": []
+      },
+      "lineHeights": {
+        "failures": []
+      },
+      "lineLengths": {
+        "failures": []
+      },
+      "summary": {
+        "checksPerformed": 56,
+        "issueCount": 0,
+        "passRate": 1
+      },
+      "theme": "dark",
+      "touchTargets": {
+        "failures": []
+      },
+      "viewport": {
+        "h": 768,
+        "w": 1024
+      },
+      "viewportLabel": "1024x768-dark"
+    },
+    {
+      "contrast": {
+        "failures": [],
+        "minRequired": 4.5
+      },
+      "fontSizes": {
+        "failures": []
+      },
+      "headingRatio": {
+        "failures": []
+      },
+      "lineHeights": {
+        "failures": []
+      },
+      "lineLengths": {
+        "failures": []
+      },
+      "summary": {
+        "checksPerformed": 56,
+        "issueCount": 0,
+        "passRate": 1
+      },
+      "theme": "dark",
+      "touchTargets": {
+        "failures": []
+      },
+      "viewport": {
+        "h": 900,
+        "w": 1440
+      },
+      "viewportLabel": "1440x900-dark"
+    },
+    {
+      "contrast": {
+        "failures": [],
+        "minRequired": 7
+      },
+      "fontSizes": {
+        "failures": []
+      },
+      "headingRatio": {
+        "failures": []
+      },
+      "lineHeights": {
+        "failures": []
+      },
+      "lineLengths": {
+        "failures": []
+      },
+      "summary": {
+        "checksPerformed": 56,
+        "issueCount": 0,
+        "passRate": 1
+      },
+      "theme": "high-contrast",
+      "touchTargets": {
+        "failures": []
+      },
+      "viewport": {
+        "h": 812,
+        "w": 375
+      },
+      "viewportLabel": "375x812-high-contrast"
+    },
+    {
+      "contrast": {
+        "failures": [],
+        "minRequired": 7
+      },
+      "fontSizes": {
+        "failures": []
+      },
+      "headingRatio": {
+        "failures": []
+      },
+      "lineHeights": {
+        "failures": []
+      },
+      "lineLengths": {
+        "failures": []
+      },
+      "summary": {
+        "checksPerformed": 56,
+        "issueCount": 0,
+        "passRate": 1
+      },
+      "theme": "high-contrast",
+      "touchTargets": {
+        "failures": []
+      },
+      "viewport": {
+        "h": 768,
+        "w": 1024
+      },
+      "viewportLabel": "1024x768-high-contrast"
+    },
+    {
+      "contrast": {
+        "failures": [],
+        "minRequired": 7
+      },
+      "fontSizes": {
+        "failures": []
+      },
+      "headingRatio": {
+        "failures": []
+      },
+      "lineHeights": {
+        "failures": []
+      },
+      "lineLengths": {
+        "failures": []
+      },
+      "summary": {
+        "checksPerformed": 56,
+        "issueCount": 0,
+        "passRate": 1
+      },
+      "theme": "high-contrast",
+      "touchTargets": {
+        "failures": []
+      },
+      "viewport": {
+        "h": 900,
+        "w": 1440
+      },
+      "viewportLabel": "1440x900-high-contrast"
+    }
+  ],
+  "aggregateIssueCount": 0,
+  "runCount": 9,
+  "programmaticPassRate": 1
+}

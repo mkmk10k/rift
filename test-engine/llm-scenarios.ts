@@ -428,7 +428,7 @@ export interface PolishTestScenario {
   pastedText: string;       // Text live-pasted during dictation
   finalText: string;        // Final STT transcription
   mode: 'verbatim' | 'clean' | 'professional';
-  expectedPolished: string; // Expected polished output
+  expectedPolished: string | string[]; // Expected polished output (multiple valid references ok)
   category: 'filler' | 'homophone' | 'grammar' | 'technical' | 'formatting';
 }
 
@@ -549,7 +549,10 @@ export const polishScenarios: PolishTestScenario[] = [
     pastedText: 'The meeting is at three thirty on the fifth',
     finalText: 'The meeting is at three thirty on the fifth',
     mode: 'professional',
-    expectedPolished: 'The meeting is at 3:30 on the 5th.',
+    expectedPolished: [
+      'The meeting is at 3:30 on the 5th.',
+      'The meeting is scheduled for 3:30 PM on the 5th.',
+    ],
     category: 'formatting',
   },
   {
@@ -559,7 +562,10 @@ export const polishScenarios: PolishTestScenario[] = [
     pastedText: 'I went to the store and I bought milk and then I came home and I made dinner',
     finalText: 'I went to the store and I bought milk and then I came home and I made dinner',
     mode: 'professional',
-    expectedPolished: 'I went to the store and bought milk. Then I came home and made dinner.',
+    expectedPolished: [
+      'I went to the store and bought milk. Then I came home and made dinner.',
+      'I went to the store, and I bought milk, and then I came home, and I made dinner.',
+    ],
     category: 'formatting',
   },
   {

@@ -8,20 +8,20 @@ function App() {
 
   useEffect(() => {
     if (showSettings) {
-      window.outloud?.window?.resize(540, 520);
+      window.rift?.window?.resize(540, 520);
     } else {
-      window.outloud?.window?.resize(420, 96);
+      window.rift?.window?.resize(420, 96);
     }
   }, [showSettings])
 
   const checkModels = async () => {
     setStatus('Checking...')
     try {
-      if (!window.outloud) {
+      if (!window.rift) {
         setStatus('Initializing...')
         return
       }
-      const result = await window.outloud.models.check()
+      const result = await window.rift.models.check()
       if (result.available) {
         setStatus('Ready')
         setModelReady(true)
@@ -117,7 +117,7 @@ function App() {
             textShadow: '0 2px 8px rgba(0,0,0,0.9), 0 1px 3px rgba(0,0,0,1)',
             flexShrink: 0
           }}>
-            Outloud
+            Rift
           </div>
 
           {/* Play Button */}

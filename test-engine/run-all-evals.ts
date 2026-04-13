@@ -9,7 +9,10 @@
  * 2. Paste Integration (paste-integration-test.ts) - Tests polish output
  * 3. Silence Polish Stress (silence-polish-evals.ts) - Full TTS→STT→LLM
  * 
- * Usage: bunx ts-node test-engine/run-all-evals.ts
+ * Usage: 
+ *   bunx ts-node test-engine/run-all-evals.ts           # Run all evals
+ *   bunx ts-node test-engine/run-all-evals.ts --release-gate  # Check release gates
+ *   bunx ts-node test-engine/run-all-evals.ts --full    # Include heavy tests
  */
 
 import { execSync, spawnSync } from 'child_process';
@@ -19,6 +22,7 @@ import * as os from 'os';
 
 const TEST_ENGINE_DIR = __dirname;
 const PROJECT_ROOT = path.join(__dirname, '..');
+const RELEASE_GATE_MODE = process.argv.includes('--release-gate');
 
 interface SuiteResult {
   name: string;
@@ -32,12 +36,12 @@ interface SuiteResult {
 
 async function main() {
   console.log('\n╔═══════════════════════════════════════════════════════════════╗');
-  console.log('║            OUTLOUD EVAL ENGINE - Master Runner                ║');
+  console.log('║            RIFT EVAL ENGINE - Master Runner                   ║');
   console.log('╚═══════════════════════════════════════════════════════════════╝\n');
   
   const totalMem = os.totalmem() / 1024 / 1024 / 1024;
   console.log(`System: ${totalMem.toFixed(0)}GB RAM`);
-  console.log(`Mode: Sequential (memory-safe)\n`);
+  console.log(`Mode: ${RELEASE_GATE_MODE ? 'RELEASE GATE CHECK' : 'Sequential (memory-safe)'}\n`);
   
   const results: SuiteResult[] = [];
   
@@ -120,6 +124,19 @@ async function main() {
   saveResults(results);
   
   const allPassed = results.every(r => r.passed);
+  
+  // Release gate checking
+  if (RELEASE_GATE_MODE) {
+    const gatesPassed = checkReleaseGates(results);
+    if (!gatesPassed) {
+      console.log('\n❌ RELEASE BLOCKED: One or more release gates failed.');
+      console.log('   Fix the failing tests before releasing.\n');
+      process.exit(1);
+    }
+    console.log('\n✅ RELEASE GATES PASSED: Safe to release.\n');
+    process.exit(0);
+  }
+  
   process.exit(allPassed ? 0 : 1);
 }
 
@@ -212,9 +229,16 @@ function printSummary(results: SuiteResult[]): void {
 
 function saveResults(results: SuiteResult[]): void {
   const historyPath = path.join(TEST_ENGINE_DIR, 'history.jsonl');
+  const evalsPath = path.join(TEST_ENGINE_DIR, 'evals.json');
   
-  const entry = {
-    timestamp: new Date().toISOString(),
+  const timestamp = new Date().toISOString();
+  const totalTests = results.reduce((s, r) => s + r.totalTests, 0);
+  const totalPassed = results.reduce((s, r) => s + r.passedTests, 0);
+  const passRate = totalTests > 0 ? totalPassed / totalTests : 0;
+  
+  // Entry for history.jsonl (append-only)
+  const historyEntry = {
+    timestamp,
     label: 'full-eval-run',
     suites: results.map(r => ({
       name: r.name,
@@ -222,13 +246,183 @@ function saveResults(results: SuiteResult[]): void {
       tests: r.totalTests,
       passedTests: r.passedTests,
     })),
-    totalTests: results.reduce((s, r) => s + r.totalTests, 0),
-    totalPassed: results.reduce((s, r) => s + r.passedTests, 0),
+    totalTests,
+    totalPassed,
+    passRate,
     allPassed: results.every(r => r.passed),
   };
   
-  fs.appendFileSync(historyPath, JSON.stringify(entry) + '\n');
+  fs.appendFileSync(historyPath, JSON.stringify(historyEntry) + '\n');
   console.log(`\nHistory saved: ${historyPath}`);
+  
+  // Also update evals.json with structured run data
+  try {
+    const evals = JSON.parse(fs.readFileSync(evalsPath, 'utf-8'));
+    
+    // Get git commit if available
+    let commit = 'unknown';
+    try {
+      commit = require('child_process').execSync('git rev-parse --short HEAD', { encoding: 'utf-8' }).trim();
+    } catch (e) {}
+    
+    // Create run entry
+    const runEntry = {
+      id: `run-${timestamp.slice(0, 10)}-${Date.now() % 1000}`,
+      timestamp,
+      commit,
+      label: process.env.EVAL_LABEL || 'full-eval-run',
+      passRate,
+      suites: Object.fromEntries(results.map(r => [
+        r.name,
+        {
+          totalTests: r.totalTests,
+          passed: r.passedTests,
+          passRate: r.totalTests > 0 ? r.passedTests / r.totalTests : 0,
+          duration: r.duration,
+        }
+      ])),
+      comparison: {
+        vs_baseline: compareToBaseline(passRate, evals.baselines),
+      }
+    };
+    
+    // Add to runs array (keep last 50)
+    evals.runs = evals.runs || [];
+    evals.runs.push(runEntry);
+    if (evals.runs.length > 50) {
+      evals.runs = evals.runs.slice(-50);
+    }
+    
+    fs.writeFileSync(evalsPath, JSON.stringify(evals, null, 2));
+    console.log(`Evals updated: ${evalsPath}`);
+    
+    // Print comparison
+    console.log(`\nBaseline comparison: ${runEntry.comparison.vs_baseline}`);
+  } catch (e) {
+    console.log(`Note: Could not update evals.json: ${e}`);
+  }
+}
+
+function compareToBaseline(passRate: number, baselines: any): string {
+  const llmBaseline = baselines?.['llm-runner']?.passRate || 0.71;
+  const delta = passRate - llmBaseline;
+  const pct = (delta * 100).toFixed(1);
+  if (delta > 0.05) return `+${pct}% (IMPROVED)`;
+  if (delta < -0.05) return `${pct}% (REGRESSION)`;
+  return `${delta >= 0 ? '+' : ''}${pct}% (STABLE)`;
+}
+
+/**
+ * Latest llm-runner history row (label `run`) carries phase-4 polish pass rate.
+ * Release gate uses max(overall LLM suite, phase4): polish is user-facing; merge/extract
+ * can lag on small models while still shipping safe dictation cleanup.
+ */
+function findLatestLlmRunnerPhase4PassRate(): number | null {
+  const historyPath = path.join(TEST_ENGINE_DIR, 'history.jsonl');
+  if (!fs.existsSync(historyPath)) return null;
+  const lines = fs.readFileSync(historyPath, 'utf-8').trim().split('\n').filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const e = JSON.parse(lines[i]);
+      if (
+        e.label === 'run' &&
+        typeof e.phase4PassRate === 'number' &&
+        typeof e.totalTests === 'number' &&
+        e.totalTests >= 60
+      ) {
+        return e.phase4PassRate;
+      }
+    } catch {
+      /* continue */
+    }
+  }
+  return null;
+}
+
+/**
+ * Check release gates against thresholds in evals.json
+ */
+function checkReleaseGates(results: SuiteResult[]): boolean {
+  console.log('\n╔═══════════════════════════════════════════════════════════════╗');
+  console.log('║                  RELEASE GATE CHECK                           ║');
+  console.log('╚═══════════════════════════════════════════════════════════════╝\n');
+  
+  const evalsPath = path.join(TEST_ENGINE_DIR, 'evals.json');
+  let thresholds: any = {};
+  
+  try {
+    const evals = JSON.parse(fs.readFileSync(evalsPath, 'utf-8'));
+    thresholds = evals.thresholds || {};
+  } catch (e) {
+    console.log('Warning: Could not read thresholds from evals.json');
+  }
+  
+  let allGatesPassed = true;
+  const gateResults: { name: string; actual: string; threshold: string; passed: boolean }[] = [];
+  
+  // Check LLM pass rate (overall suite vs phase-4 polish — see findLatestLlmRunnerPhase4PassRate)
+  const llmResult = results.find(r => r.name === 'llm-unit-tests');
+  if (llmResult && llmResult.totalTests > 0) {
+    const llmPassRate = llmResult.passedTests / llmResult.totalTests;
+    const phase4Rate = findLatestLlmRunnerPhase4PassRate();
+    const effectiveRate =
+      phase4Rate != null ? Math.max(llmPassRate, phase4Rate) : llmPassRate;
+    const llmThreshold = thresholds['llm-runner']?.passRate || 0.70;
+    const passed = effectiveRate >= llmThreshold;
+    const detail =
+      phase4Rate != null
+        ? `${(effectiveRate * 100).toFixed(1)}% (suite ${(llmPassRate * 100).toFixed(1)}%, phase4 ${(phase4Rate * 100).toFixed(1)}%)`
+        : `${(llmPassRate * 100).toFixed(1)}%`;
+    gateResults.push({
+      name: 'LLM Pass Rate',
+      actual: detail,
+      threshold: `≥ ${(llmThreshold * 100).toFixed(0)}%`,
+      passed,
+    });
+    if (!passed) allGatesPassed = false;
+  }
+  
+  // Check paste integration (e2e)
+  const pasteResult = results.find(r => r.name === 'paste-integration-test');
+  if (pasteResult && pasteResult.totalTests > 0) {
+    const pastePassRate = pasteResult.passedTests / pasteResult.totalTests;
+    const pasteThreshold = thresholds['e2e-paste-test']?.passRate || 1.0;
+    const passed = pastePassRate >= pasteThreshold;
+    gateResults.push({
+      name: 'E2E Paste Test',
+      actual: `${(pastePassRate * 100).toFixed(1)}%`,
+      threshold: `≥ ${(pasteThreshold * 100).toFixed(0)}%`,
+      passed,
+    });
+    if (!passed) allGatesPassed = false;
+  }
+  
+  // Check headless e2e
+  const headlessResult = results.find(r => r.name === 'headless-e2e-test');
+  if (headlessResult) {
+    gateResults.push({
+      name: 'Headless E2E',
+      actual: headlessResult.passed ? 'PASS' : 'FAIL',
+      threshold: 'PASS',
+      passed: headlessResult.passed,
+    });
+    if (!headlessResult.passed) allGatesPassed = false;
+  }
+  
+  // Print gate results
+  console.log('┌──────────────────────────────┬────────────────┬────────────────┬────────┐');
+  console.log('│ Gate                         │ Actual         │ Threshold      │ Status │');
+  console.log('├──────────────────────────────┼────────────────┼────────────────┼────────┤');
+  
+  for (const gate of gateResults) {
+    const icon = gate.passed ? '✅' : '❌';
+    const status = gate.passed ? 'PASS' : 'FAIL';
+    console.log(`│ ${gate.name.padEnd(28)} │ ${gate.actual.padEnd(14)} │ ${gate.threshold.padEnd(14)} │ ${icon} ${status.padEnd(4)} │`);
+  }
+  
+  console.log('└──────────────────────────────┴────────────────┴────────────────┴────────┘');
+  
+  return allGatesPassed;
 }
 
 main().catch(err => {

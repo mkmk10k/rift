@@ -1,0 +1,85 @@
+---
+description: Use Pretext (@chenglou/pretext) for text measurement and layout on web frontends
+globs: "**/*.{html,css,js,ts,tsx}"
+alwaysApply: false
+---
+
+# Pretext for website and frontend text
+
+## Rule
+
+For **any website or frontend** in this project where text drives layout, **use [@chenglou/pretext](https://www.npmjs.com/package/@chenglou/pretext)** for:
+
+- Pre-computing **heights** before font-size or theme changes (avoid layout jank / CLS)
+- **`min-height`** on containers whose content is dynamic or user-scaled
+- **Interactive demos** where text length changes (measure final layout before animating)
+- **Cards and headlines** when `rem` scaling would otherwise reflow unpredictably
+
+Use `prepare(text, fontString)` once per text + font, then `layout(prepared, maxWidth, lineHeight)` for height / line count. Keep `font` in sync with CSS `font` (family, size, weight).
+
+## What Pretext measures (and what it must NOT)
+
+**Measure (block-level text containers):** `h1`-`h4`, `p`, `li`, `summary`, `figcaption` — elements whose `textContent` represents a complete paragraph that wraps at container width. Set `min-height` from `layout()` result.
+
+**Do NOT measure:**
+- **`span`, `td`, `th`, `label`, `a`** — inline or table-cell elements. Setting `min-height` on these creates unexpected expansion (nav breaks, table cells expand, inline spans get block-like height).
+- **Empty or dynamic elements** (demo text placeholders, animation containers) — `textContent` may be empty at measure time; Pretext returns `height: 0` but the element might expand later via JS.
+- **Nav and footer text** — fixed/sticky elements where `min-height` interferes with responsive collapse.
+
+## Spacing: Pretext-proportional section padding
+
+`layoutPage()` in `website/main.js` sums measured block-element heights + visual element heights per section, then applies proportional padding:
+
+```
+padTop  = min(64, max(24, contentHeight * 0.25))
+padBottom = min(48, max(24, contentHeight * 0.2))
+```
+
+Sections with complex non-text content (tables, grids, animations) should set their own CSS `padding` as fallback rather than relying on `layoutPage()`, because the formula assumes text-heavy sections. Add explicit `padding: clamp(2rem, 4vw, 4rem)` to these in CSS.
+
+**`section-full` sections** (hero, story, passage) skip the padding calculator — they use `min-height: 100vh` + `justify-content: center` from CSS.
+
+## Triggers for re-measurement
+
+- `DOMContentLoaded` → `layoutPage()`
+- `document.fonts.ready` → `rAF(layoutPage)` (webfont metrics differ from fallback)
+- `window resize` → debounce 120ms → `layoutPage()`
+- Font scale change (A+/A-) → `rAF(layoutPage)`
+- Theme change → `rAF(layoutPage)`
+
+## Vendoring
+
+Pretext is a **multi-file** ES module (`pretext.mjs` + `bidi.js`, `analysis.js`, `measurement.js`, `line-break.js`). All must be in `website/vendor/`. Run `bun run website:vendor-pretext` after `bun install`. Files must be committed for Cloudflare Pages (no `postinstall` on static deploy).
+
+## Pretext API quick reference
+
+```js
+prepare(text, fontStr, options?) → PreparedText  // one-time: segment, measure, cache
+layout(prepared, maxWidth, lineHeight) → { height, lineCount }  // hot path: pure math
+```
+
+- `fontStr` = canvas font format: `"400 16px Plus Jakarta Sans"`
+- `maxWidth` = `el.clientWidth` (current box width after CSS layout)
+- `lineHeight` = computed CSS line-height in px
+- Returns `height = lineCount * lineHeight`
+
+**Caveats:** `system-ui` font gives inaccurate results on macOS (use named fonts). Emoji width correction needs DOM access. `overflow-wrap: break-word` is the default.
+
+## Hard-won lessons (2026-03-29)
+
+1. **Never use universal selectors** (`span, td, th`) for Pretext measurement — it breaks nav collapse, table layout, and inflates padding calculations.
+2. **`min-height` on inline elements is ignored by CSS but computed in JS** — the `offsetHeight` sum inflates `contentHeight` which inflates proportional padding.
+3. **Table-heavy sections** (comparison table, benchmarks) must have explicit CSS padding, not JS-computed padding — their `contentHeight` from 30+ `td`/`th` cells produces absurd proportional values.
+4. **Demo containers** with empty/dynamic `textContent` get `height: 0` from Pretext, causing visual collapse — exclude or handle specially.
+5. **Font load timing matters** — `DOMContentLoaded` measures with fallback fonts; `document.fonts.ready` re-measures with webfonts. Both are needed.
+6. **`system-ui`** on macOS: canvas resolves to different optical variants than DOM — use named fonts like `Plus Jakarta Sans`.
+
+## QA after material edits
+
+Run the **`website-qa`** skill: serve `website/`, then `bun run website:lighthouse`, and use Cursor browser MCP for screenshots across viewports (320, 375, 768, 1024, 1440) and font scales (1x, 1.25x, 1.5x).
+
+## Reference
+
+- Implementation: `website/main.js` (`layoutPage()`, `measureTextElement()`)
+- Vendor: `website/vendor/pretext.mjs` + sibling chunks
+- Vendor script: `bun run website:vendor-pretext`

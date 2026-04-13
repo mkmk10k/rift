@@ -1,0 +1,40 @@
+name: macOS CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+# Build + static checks for first-launch / model-download wiring (no HF model downloads).
+jobs:
+  build-and-first-launch-checks:
+    runs-on: macos-15
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile || bun install
+
+      - name: TypeScript build (main + preload + renderer)
+        run: bun run build
+
+      - name: First-launch checks + download progress contract (HF stub)
+        run: bash scripts/first-launch-ci-check.sh
+
+      - name: Job summary
+        if: success()
+        run: |
+          echo "## macOS CI" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Runner:** macOS 15" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **bun run build:** OK" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **first-launch-ci-check.sh:** OK (CLI wiring + **ci_download_progress_stub** stream proves multi-tick progress + phases)" >> "$GITHUB_STEP_SUMMARY"

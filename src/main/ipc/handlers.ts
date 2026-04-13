@@ -86,7 +86,7 @@ function getPythonPath(): string {
   }
   
   // Development: check for local bundle first
-  const devBundlePath = path.join(__dirname, '../../../../python-bundle/bin/python3.11');
+  const devBundlePath = path.join(app.getAppPath(), 'python-bundle', 'bin', 'python3.11');
   if (fs.existsSync(devBundlePath)) {
     console.log('[Rift] Using dev bundle Python:', devBundlePath);
     _pythonPath = devBundlePath;
@@ -144,17 +144,43 @@ class TTSServer {
   private pendingRequests: Map<number, { resolve: (value: any) => void; reject: (error: any) => void }> = new Map();
   private requestId = 0;
   private buffer = '';
+  private currentModel: 'kokoro' | 'chatterbox' | 'chatterbox-turbo' = 'kokoro';
+  private isRestarting = false;
 
   async start(): Promise<void> {
-    if (this.process && this.isReady) return;
+    // Only skip if process exists AND model is fully loaded (not just ready)
+    if (this.process && this.isReady && this.modelLoaded) return;
+    
+    // If process exists but model isn't loaded yet, wait for it instead of restarting
+    if (this.process && this.isReady && !this.modelLoaded) {
+      console.log('[TTS Server] Waiting for model to finish loading...');
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Model loading timeout'));
+        }, 60000);
+        
+        const checkLoaded = () => {
+          if (this.modelLoaded) {
+            clearTimeout(timeout);
+            resolve();
+          } else if (!this.process) {
+            clearTimeout(timeout);
+            reject(new Error('Process died while waiting'));
+          } else {
+            setTimeout(checkLoaded, 100);
+          }
+        };
+        checkLoaded();
+      });
+    }
 
     const scriptPath = app.isPackaged
       ? path.join(process.resourcesPath, 'python', 'tts_server.py')
       : path.join(app.getAppPath(), 'python', 'tts_server.py');
 
-    console.log('[TTS Server] Starting persistent server with Python:', getPythonPath());
+    console.log(`[TTS Server] Starting persistent server with Python: ${getPythonPath()}, model: ${this.currentModel}`);
 
-    this.process = spawn(getPythonPath(), [scriptPath], {
+    this.process = spawn(getPythonPath(), [scriptPath, '--model', this.currentModel], {
       stdio: ['pipe', 'pipe', 'pipe']
     });
 
@@ -164,7 +190,8 @@ class TTSServer {
     });
 
     this.process.stderr?.on('data', (data) => {
-      console.log('[TTS Server]', data.toString().trim());
+      const msg = data.toString().trim();
+      console.log('[TTS Server]', msg);
     });
 
     this.process.on('close', (code) => {
@@ -203,12 +230,40 @@ class TTSServer {
         
         if (msg.type === 'ready') {
           this.isReady = true;
-          console.log('[TTS Server] Server ready');
+          const previousModel = this.currentModel;
+          this.currentModel = msg.model || 'kokoro';
+          console.log(`[TTS Server] Server ready (model: ${this.currentModel}, msg.model: ${msg.model}, previous: ${previousModel})`);
         } else if (msg.type === 'model_loaded') {
           this.modelLoaded = true;
-          console.log('[TTS Server] Model loaded - fast synthesis enabled');
+          this.currentModel = msg.model || this.currentModel;
+          console.log(`[TTS Server] Model loaded: ${this.currentModel} - fast synthesis enabled`);
+        } else if (msg.type === 'model_switched') {
+          this.currentModel = msg.model;
+          this.modelLoaded = true;
+          console.log(`[TTS Server] Switched to model: ${this.currentModel}`);
+          if (msg.fallback) {
+            console.log('[TTS Server] Note: Fallback to Kokoro due to Chatterbox failure');
+          }
+          // Resolve pending switchModel request
+          const lookupId = this.requestId - 1;
+          const pending = this.pendingRequests.get(lookupId);
+          if (pending) {
+            this.pendingRequests.delete(lookupId);
+            pending.resolve(msg);
+          }
+        } else if (msg.type === 'restart_needed') {
+          // Chatterbox memory optimization - restart the server
+          console.log(`[TTS Server] Restart needed: ${msg.reason} (memory: ${msg.current_mb}MB, growth: ${msg.growth_mb}MB)`);
+          this.handleMemoryRestart();
         } else if (msg.type === 'success' || msg.type === 'error') {
           // This is a response to a synthesis request
+          const pending = this.pendingRequests.get(this.requestId - 1);
+          if (pending) {
+            this.pendingRequests.delete(this.requestId - 1);
+            pending.resolve(msg);
+          }
+        } else if (msg.type === 'voices' || msg.type === 'status') {
+          // Response to get_voices or get_status
           const pending = this.pendingRequests.get(this.requestId - 1);
           if (pending) {
             this.pendingRequests.delete(this.requestId - 1);
@@ -227,19 +282,19 @@ class TTSServer {
       console.log('[TTS Server] Not ready, starting/restarting...');
       try {
         await this.start();
-      } catch (err) {
+      } catch (err: any) {
         return { success: false, error: 'Failed to start TTS server' };
       }
     }
 
-    // Verify server is responsive with ping
+    // Verify server is responsive
     const isHealthy = await this.healthCheck();
     if (!isHealthy) {
       console.log('[TTS Server] Health check failed, restarting...');
       this.stop();
       try {
         await this.start();
-      } catch (err) {
+      } catch (err: any) {
         return { success: false, error: 'TTS server restart failed' };
       }
     }
@@ -438,6 +493,7 @@ class TTSServer {
     speed: number, 
     sender: Electron.WebContents
   ): Promise<{ success: boolean; error?: string }> {
+    
     if (!this.process || !this.isReady) {
       await this.start();
     }
@@ -539,7 +595,6 @@ class TTSServer {
           this.processBuffer = originalProcessBuffer;
         }
       };
-
       this.process?.stdin?.write(cmd + '\n');
       
       // Timeout for realtime streaming
@@ -560,11 +615,126 @@ class TTSServer {
       this.isReady = false;
       this.modelLoaded = false;
     }
+    this.isRestarting = false;
+  }
+
+  // Check if TTS server is ready for synthesis
+  isServerReady(): boolean {
+    return this.process !== null && this.isReady && this.modelLoaded;
+  }
+
+  // Get current TTS model
+  getCurrentModel(): 'kokoro' | 'chatterbox' | 'chatterbox-turbo' {
+    return this.currentModel;
+  }
+
+  // Handle memory-triggered restart (Chatterbox memory leak mitigation)
+  private async handleMemoryRestart(): Promise<void> {
+    if (this.isRestarting) {
+      console.log('[TTS Server] Already restarting, skipping...');
+      return;
+    }
+
+    this.isRestarting = true;
+    console.log('[TTS Server] Restarting for memory optimization...');
+
+    // Notify renderer about the restart
+    const { BrowserWindow } = require('electron');
+    const mainWindow = BrowserWindow.getAllWindows()[0];
+    if (mainWindow) {
+      mainWindow.webContents.send('tts:memory-restart', { model: this.currentModel });
+    }
+
+    // Stop current process
+    this.stop();
+
+    // Small delay to ensure process is fully stopped
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Restart with the same model
+    try {
+      await this.start();
+      console.log('[TTS Server] Memory restart complete');
+    } catch (err) {
+      console.error('[TTS Server] Memory restart failed:', err);
+    }
+
+    this.isRestarting = false;
+  }
+
+  // Switch TTS model - uses server restart to get fresh MLX context
+  async switchModel(newModel: 'kokoro' | 'chatterbox' | 'chatterbox-turbo'): Promise<{ success: boolean; model?: string; error?: string }> {
+    
+    if (newModel === this.currentModel && this.modelLoaded) {
+      return { success: true, model: newModel };
+    }
+    
+    console.log(`[TTS Server] Switching to ${newModel} via server restart (fresh MLX context)...`);
+    
+    // Stop current server
+    this.stop();
+    
+    // Small delay to ensure clean shutdown
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // Update model before restart - start() will pass --model argument to Python
+    this.currentModel = newModel;
+    
+    // Start fresh server with the new model
+    try {
+      await this.start();
+      
+      console.log(`[TTS Server] Successfully switched to ${newModel}`);
+      return { success: true, model: newModel };
+    } catch (err: any) {
+      // Revert to kokoro if chatterbox fails
+      this.currentModel = 'kokoro';
+      return { success: false, error: `Failed to start ${newModel}: ${err.message}` };
+    }
+  }
+
+  // Get available voices for current model
+  async getVoices(): Promise<{ success: boolean; voices?: Record<string, string>; model?: string; error?: string }> {
+    if (!this.process || !this.isReady) {
+      return { success: false, error: 'TTS server not ready' };
+    }
+
+    const id = this.requestId++;
+    const cmd = JSON.stringify({ action: 'get_voices' });
+
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        this.pendingRequests.delete(id);
+        resolve({ success: false, error: 'Get voices timeout' });
+      }, 5000);
+
+      this.pendingRequests.set(id, {
+        resolve: (msg) => {
+          clearTimeout(timeout);
+          if (msg.type === 'voices') {
+            resolve({ success: true, voices: msg.voices, model: msg.model });
+          } else {
+            resolve({ success: false, error: msg.error || 'Failed to get voices' });
+          }
+        },
+        reject: (err) => {
+          clearTimeout(timeout);
+          resolve({ success: false, error: err.message });
+        }
+      });
+
+      this.process?.stdin?.write(cmd + '\n');
+    });
   }
 }
 
 // Global TTS server instance
 const ttsServer = new TTSServer();
+
+// Export getter for use by other modules (e.g., setup window)
+export function getTtsServer() {
+  return ttsServer;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CODE TALK - Context Detection for Smart TTS Transform
@@ -1199,8 +1369,15 @@ export function shutdownServers(): void {
 /**
  * Register all IPC handlers for communication with renderer process
  */
+let ipcHandlersHaveBeenRegistered = false;
 
 export function registerIpcHandlers() {
+  if (ipcHandlersHaveBeenRegistered) {
+    console.warn('[Rift] registerIpcHandlers: already registered, skipping duplicate call');
+    return;
+  }
+  ipcHandlersHaveBeenRegistered = true;
+
   // Start TTS server in background (pre-warm)
   ttsServer.start().catch(err => {
     console.error('[TTS Server] Failed to pre-warm:', err);
@@ -1412,6 +1589,7 @@ export function registerIpcHandlers() {
 
     console.log('[TTS Realtime] Starting realtime synthesis');
     console.log('[TTS Realtime] Text length:', textToSpeak.length, 'chars');
+    console.log('[TTS Realtime] Voice:', request.voice);
     console.log('[TTS Realtime] Code Talk:', codeTalkUsed ? 'enabled' : 'disabled');
     
     const result = await ttsServer.synthesizeRealtime(
@@ -1660,8 +1838,6 @@ export function registerIpcHandlers() {
     // CHUNK-AND-COMMIT: Reset the Python-side chunk tracker
     await sttServer.resetSession();
     
-    fetch('http://127.0.0.1:7242/ingest/2b23957f-9b12-46c7-8588-a208ce0ca914',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'handlers.ts:stream-start',message:'stream-start called (chunk-and-commit)',data:{hadPrevSession:!!streamingSession},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'CAC',runId:'chunk-commit'})}).catch(()=>{});
-    
     // Pre-pad with 250ms of silence to give Parakeet audio context
     const LEAD_IN_SAMPLES = 4000; // 250ms at 16kHz
     const leadInSilence = new Float32Array(LEAD_IN_SAMPLES);
@@ -1771,7 +1947,6 @@ export function registerIpcHandlers() {
     sender: Electron.WebContents, 
     sessionId: string
   ): void {
-    fetch('http://127.0.0.1:7242/ingest/2b23957f-9b12-46c7-8588-a208ce0ca914',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'handlers.ts:triggerTranscription:entry',message:'triggerTranscription called',data:{isTranscribing,pendingTranscription,totalSamples:session.totalSamples},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B',runId:'post-fix4'})}).catch(()=>{});
     
     // WATCHDOG: If isTranscribing has been true for too long, force reset
     // This handles cases where the STT server promise never resolves (crash, hang)
@@ -1779,7 +1954,6 @@ export function registerIpcHandlers() {
       const stuckTime = Date.now() - transcriptionStartedAt;
       if (stuckTime > TRANSCRIPTION_WATCHDOG_MS) {
         console.warn(`[STT Streaming] WATCHDOG: Forcing reset after ${stuckTime}ms stuck`);
-        fetch('http://127.0.0.1:7242/ingest/2b23957f-9b12-46c7-8588-a208ce0ca914',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'handlers.ts:watchdog',message:'Watchdog reset',data:{stuckTime},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'WATCHDOG',runId:'post-fix9'})}).catch(()=>{});
         isTranscribing = false;
         // Don't return - let this attempt proceed
       }
@@ -1903,7 +2077,6 @@ export function registerIpcHandlers() {
     streamingSession.lastChunkTime = now;
     
     if (timeSinceLastChunk > 2000 || streamingSession.totalSamples < 50000) {
-      fetch('http://127.0.0.1:7242/ingest/2b23957f-9b12-46c7-8588-a208ce0ca914',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'handlers.ts:chunk',message:'Chunk received',data:{chunkLen:chunk.length,totalSamples:streamingSession.totalSamples,timeSinceLastChunk,sessionId:streamingSession.id},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'PAUSE',runId:'post-fix4'})}).catch(()=>{});
     }
     
     // Log if there was a significant gap (potential pause in speech)
@@ -1933,7 +2106,6 @@ export function registerIpcHandlers() {
     // Check if we should transcribe
     // With lead-in silence (4000) + first chunk (8000) = 12000 >= 10000, first transcription triggers immediately
     const shouldTranscribe = streamingSession.totalSamples >= minSamples;
-    fetch('http://127.0.0.1:7242/ingest/2b23957f-9b12-46c7-8588-a208ce0ca914',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'handlers.ts:transcribeCheck',message:'Checking transcription threshold',data:{totalSamples:streamingSession.totalSamples,minSamples,shouldTranscribe,isTranscribing,pendingTranscription},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A',runId:'post-fix4'})}).catch(()=>{});
     if (shouldTranscribe) {
       triggerTranscription(streamingSession, event.sender, streamingSession.id);
     }
@@ -1948,7 +2120,6 @@ export function registerIpcHandlers() {
 
   // STT Streaming: End session and get final transcription
   ipcMain.handle('stt:stream-end', async (event) => {
-    fetch('http://127.0.0.1:7242/ingest/2b23957f-9b12-46c7-8588-a208ce0ca914',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'handlers.ts:streamEnd',message:'stream-end called',data:{hasSession:!!streamingSession,sessionId:streamingSession?.id,totalSamples:streamingSession?.totalSamples,lastTranscription:streamingSession?.lastTranscription?.slice(0,60)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'END',runId:'post-fix4'})}).catch(()=>{});
     
     if (!streamingSession) {
       return { success: false, error: 'No active streaming session' };
@@ -2007,7 +2178,6 @@ export function registerIpcHandlers() {
   // Strategy: Type only the NEW characters (delta) to avoid retyping everything
   ipcMain.handle('text:live-paste', async (event, { text, previousLength }: { text: string; previousLength: number }) => {
     console.log(`[Live Paste] Called with text="${text.substring(0, 30)}..." (${text.length} chars), previousLength=${previousLength}`);
-    fetch('http://127.0.0.1:7242/ingest/2b23957f-9b12-46c7-8588-a208ce0ca914',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'handlers.ts:live-paste',message:'Live paste handler called',data:{textLen:text.length,textPreview:text.substring(0,40),previousLength},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'PASTE',runId:'post-fix5'})}).catch(()=>{});
     
     try {
       if (text.length === 0) {
@@ -2050,7 +2220,6 @@ export function registerIpcHandlers() {
         
         proc.on('close', (code) => {
           console.log(`[Live Paste] type-text exited with code ${code}, stdout: "${stdout.trim()}", stderr: "${stderr.trim()}"`);
-          fetch('http://127.0.0.1:7242/ingest/2b23957f-9b12-46c7-8588-a208ce0ca914',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'handlers.ts:live-paste-done',message:'Paste tool completed',data:{exitCode:code,stdout:stdout.trim(),stderr:stderr.trim(),textLen:newText.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'PASTE',runId:'post-fix5'})}).catch(()=>{});
           if (code === 0) {
             // Send result back to renderer for logging
             event.sender.send('live-paste-debug', { success: true, stdout: stdout.trim(), chars: newText.length });
@@ -2407,8 +2576,8 @@ export function registerIpcHandlers() {
     }
   });
   
-  // Input Source: Switch to Outloud Input
-  ipcMain.handle('input-source:switch-to-outloud', async () => {
+  // Input Source: Switch to Rift Input
+  ipcMain.handle('input-source:switch-to-rift', async () => {
     const switchToolPath = app.isPackaged
       ? path.join(process.resourcesPath, 'tools', 'switch-input')
       : path.join(app.getAppPath(), 'tools', 'switch-input');
@@ -2418,11 +2587,11 @@ export function registerIpcHandlers() {
     }
     
     try {
-      execSync(`"${switchToolPath}" --to-outloud`, { encoding: 'utf-8', timeout: 5000 });
-      console.log('[Input Source] Switched to Outloud Input');
+      execSync(`"${switchToolPath}" --to-rift`, { encoding: 'utf-8', timeout: 5000 });
+      console.log('[Input Source] Switched to Rift Input');
       return { success: true };
     } catch (e: any) {
-      console.error('[Input Source] Switch to Outloud failed:', e.message);
+      console.error('[Input Source] Switch to Rift failed:', e.message);
       return { success: false, error: e.message };
     }
   });
@@ -2573,7 +2742,6 @@ export function registerIpcHandlers() {
     // Debounce: if we're already processing or called too recently, skip
     const now = Date.now();
     if (isGettingSelection || now - lastSelectionTime < 500) {
-      fetch('http://127.0.0.1:7242/ingest/2b23957f-9b12-46c7-8588-a208ce0ca914',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'handlers.ts:debounce',message:'Debounced - too rapid',data:{isGettingSelection,timeSinceLast:now-lastSelectionTime},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'M'})}).catch(()=>{});
       return { success: false, error: 'Already processing selection' };
     }
     isGettingSelection = true;
@@ -2619,7 +2787,6 @@ export function registerIpcHandlers() {
         });
         sourceAppName = result;
         console.log('[Rift] Source app:', sourceAppName);
-        fetch('http://127.0.0.1:7242/ingest/2b23957f-9b12-46c7-8588-a208ce0ca914',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'handlers.ts:sourceApp',message:'Source app detected',data:{sourceAppName,willActivate:sourceAppName && sourceAppName !== 'Electron'},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'L'})}).catch(()=>{});
       } catch (e) {
         console.error('[Rift] Failed to get source app:', e);
       }

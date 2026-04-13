@@ -134,16 +134,83 @@ if platform.machine() != 'arm64':
     }), flush=True)
     sys.exit(1)
 
+sys.stderr.write("[STT] Apple Silicon detected, checking dependencies...\n")
+sys.stderr.flush()
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DEPENDENCY SAFETY NET
+# ═══════════════════════════════════════════════════════════════════════════════
+# Ensures all required packages are available, installing missing ones at runtime.
+# This provides a safety net in case the python-bundle is incomplete.
+
+import subprocess
+
+def ensure_package(package_name, import_name=None):
+    """Try to import a package, install if missing.
+    
+    Args:
+        package_name: The pip package name to install
+        import_name: The Python import name (if different from package_name)
+    """
+    check_name = import_name or package_name
+    try:
+        __import__(check_name)
+        return True
+    except ImportError:
+        sys.stderr.write(f"[STT] Installing missing package: {package_name}...\n")
+        sys.stderr.flush()
+        try:
+            result = subprocess.run(
+                [sys.executable, '-m', 'pip', 'install', package_name],
+                capture_output=True,
+                text=True,
+                timeout=300  # 5 minute timeout for large packages
+            )
+            if result.returncode == 0:
+                sys.stderr.write(f"[STT] {package_name} installed successfully\n")
+                sys.stderr.flush()
+                return True
+            else:
+                sys.stderr.write(f"[STT] pip install failed: {result.stderr[:500]}\n")
+                sys.stderr.flush()
+                return False
+        except subprocess.TimeoutExpired:
+            sys.stderr.write(f"[STT] Timeout installing {package_name}\n")
+            sys.stderr.flush()
+            return False
+        except Exception as e:
+            sys.stderr.write(f"[STT] Failed to install {package_name}: {e}\n")
+            sys.stderr.flush()
+            return False
+
+# STT required packages (install in order)
+REQUIRED_PACKAGES = [
+    ('soundfile', None),
+    ('numpy', None),
+    ('librosa', None),  # For audio resampling
+    ('parakeet-mlx', 'parakeet_mlx'),
+]
+
+sys.stderr.write(f"[STT] Checking {len(REQUIRED_PACKAGES)} required packages...\n")
+sys.stderr.flush()
+
+for pkg_name, import_name in REQUIRED_PACKAGES:
+    if not ensure_package(pkg_name, import_name):
+        print(json.dumps({
+            "type": "error",
+            "error": f"Failed to load required package: {pkg_name}"
+        }), flush=True)
+        sys.exit(1)
+
+sys.stderr.write("[STT] All dependencies loaded\n")
+sys.stderr.flush()
+
 # Suppress MLX warnings for cleaner logs
 os.environ['MLX_DISABLE_METAL_WARNINGS'] = '1'
 
-# Import core dependencies
-try:
-    import soundfile as sf
-    import numpy as np
-except ImportError as e:
-    print(json.dumps({"type": "error", "error": f"Missing dependency: {e}"}), flush=True)
-    sys.exit(1)
+# Import core dependencies (now guaranteed to be available)
+import soundfile as sf
+import numpy as np
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MODEL CONFIGURATION

@@ -3,14 +3,14 @@
  * switch-input.swift
  * 
  * CLI tool to switch macOS input sources programmatically.
- * Used by Outloud to automatically switch to Outloud Input
+ * Used by Rift to automatically switch to Rift Input
  * when dictation starts, and switch back when it ends.
  * 
  * Usage:
  *   ./switch-input --get                    - Print current input source ID
  *   ./switch-input --to <source-id>         - Switch to specified input source
  *   ./switch-input --list                   - List all enabled input sources
- *   ./switch-input --to-outloud             - Switch to Outloud Input
+ *   ./switch-input --to-rift                - Switch to Rift Input
  * 
  * Exit codes:
  *   0 - Success
@@ -125,7 +125,7 @@ func enableInputSource(id: String) -> Bool {
 let args = Array(CommandLine.arguments.dropFirst())
 
 if args.isEmpty {
-    fputs("Usage: switch-input [--get|--list|--to <id>|--to-outloud]\n", stderr)
+    fputs("Usage: switch-input [--get|--list|--to <id>|--to-rift]\n", stderr)
     exit(1)
 }
 
@@ -159,32 +159,32 @@ case "--to":
         exit(2)
     }
     
-case "--to-outloud":
-    let outloudID = "sh.outloud.inputmethod.outloud"
+case "--to-rift":
+    let riftID = "dev.myrift.inputmethod.rift"
     
     // First try to switch
-    if switchToInputSource(id: outloudID) {
-        print("OK: Switched to Outloud Input")
+    if switchToInputSource(id: riftID) {
+        print("OK: Switched to Rift Input")
         exit(0)
     }
     
     // If not found, try to enable it first
-    fputs("Attempting to enable Outloud Input...\n", stderr)
-    if enableInputSource(id: outloudID) {
+    fputs("Attempting to enable Rift Input...\n", stderr)
+    if enableInputSource(id: riftID) {
         // Small delay for system to register
         usleep(100000) // 100ms
-        if switchToInputSource(id: outloudID) {
-            print("OK: Enabled and switched to Outloud Input")
+        if switchToInputSource(id: riftID) {
+            print("OK: Enabled and switched to Rift Input")
             exit(0)
         }
     }
     
-    fputs("Error: Outloud Input not found. Please enable it in System Preferences > Keyboard > Input Sources\n", stderr)
+    fputs("Error: Rift Input not found. Please enable it in System Preferences > Keyboard > Input Sources\n", stderr)
     exit(2)
     
 default:
     fputs("Unknown option: \(args[0])\n", stderr)
-    fputs("Usage: switch-input [--get|--list|--to <id>|--to-outloud]\n", stderr)
+    fputs("Usage: switch-input [--get|--list|--to <id>|--to-rift]\n", stderr)
     exit(1)
 }
 

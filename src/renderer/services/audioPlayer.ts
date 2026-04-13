@@ -132,10 +132,7 @@ export class AudioPlayer {
    * Clean up audio element to free memory
    */
   private cleanup(): void {
-    // #region agent log
-    const stack = new Error().stack?.split('\n').slice(1, 5).join(' <- ') || 'no stack';
-    fetch('http://127.0.0.1:7242/ingest/2b23957f-9b12-46c7-8588-a208ce0ca914',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'audioPlayer.ts:cleanup',message:'Cleanup called',data:{hasAudio:!!this.audio,_isPaused:this._isPaused,stack:stack.substring(0,300)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'J'})}).catch(()=>{});
-    // #endregion
+    // const stack = new Error().stack?.split('\n').slice(1, 5).join(' <- ') || 'no stack';  // Debug helper
     // Stop level monitoring
     if (this.animationFrame) {
       cancelAnimationFrame(this.animationFrame);
@@ -195,9 +192,6 @@ export class AudioPlayer {
   }
 
   pause(): void {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/2b23957f-9b12-46c7-8588-a208ce0ca914',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'audioPlayer.ts:pause',message:'AudioPlayer pause called',data:{hasAudio:!!this.audio,_isPaused:this._isPaused,currentTime:this.audio?.currentTime,duration:this.audio?.duration},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'I'})}).catch(()=>{});
-    // #endregion
     if (this.audio) {
       this._isPaused = true;
       this.audio.pause();
@@ -206,9 +200,6 @@ export class AudioPlayer {
   }
 
   resume(): void {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/2b23957f-9b12-46c7-8588-a208ce0ca914',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'audioPlayer.ts:resume',message:'AudioPlayer resume called',data:{hasAudio:!!this.audio,_isPaused:this._isPaused,currentTime:this.audio?.currentTime,duration:this.audio?.duration,audioPaused:this.audio?.paused},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'I'})}).catch(()=>{});
-    // #endregion
     // Try to resume if we have an audio element that's actually paused
     if (this.audio && this.audio.paused) {
       this._isPaused = false;
@@ -242,5 +233,4 @@ export class AudioPlayer {
 
 // Singleton instance
 export const audioPlayer = new AudioPlayer();
-
 

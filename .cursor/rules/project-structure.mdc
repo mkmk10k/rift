@@ -1,0 +1,149 @@
+---
+description: Rift project structure, repos, remotes, and key commands — AI briefing
+alwaysApply: true
+---
+
+# Rift Project — AI Briefing Document
+
+Read this every session. This is the single source of truth for how this project is organised.
+
+---
+
+## You Are Here
+
+- **Local folder**: `~/Code/rift/`
+- **Private GitHub repo**: `mkmk10k/rift-dev` (daily development, all source)
+- **Public GitHub repo**: `mkmk10k/rift` (open-source mirror, MIT licence)
+
+This is the **only folder you ever open for Rift work**. There is no reason to open any other folder.
+
+---
+
+## Directory Layout
+
+```
+~/Code/rift/
+  src/                  Electron app — main, renderer, preload
+  python/               ML scripts — STT/TTS servers, model download
+  website/              myrift.dev static site (HTML/CSS/JS)
+  scripts/
+    release.js          Build DMG + publish GitHub Release to public repo
+    publish-public.js   Sync curated source code to public repo
+    bundle-python.js    Bundle Python runtime for distribution
+    update-version.js   Auto-generate version from date + git hash
+  test-engine/          Evals and automated tests
+  tools/                Swift binaries for text injection / input switching
+  setup/                First-launch Setup window HTML + assets
+  input-method/         macOS Input Method extension (Swift)
+  .cursor/rules/        AI rules — YOU are reading one now
+  .cursor/skills/       AI skill files for complex tasks
+  .gitignore            Covers node_modules, dist, models, credentials
+  .publish-ignore       Defines what stays out of the public repo
+```
+
+---
+
+## Git Remotes
+
+| Remote | Repo | Visibility | When to use |
+|--------|------|------------|-------------|
+| `origin` | `mkmk10k/rift-dev` | **Private** | `git push` for all daily work |
+| `public` | `mkmk10k/rift` | **Public** | NEVER push directly — use script |
+
+```bash
+git push origin main        # normal daily push — private
+git push public main        # WRONG — always use bun run publish-public
+```
+
+---
+
+## CRITICAL RULES — Never Break These
+
+1. **NEVER `git push public` directly.** Always use `bun run publish-public`. The script enforces the `.publish-ignore` boundary. A direct push would expose internal tooling and the private website source.
+2. **NEVER commit `.env`, models, or credentials** to any branch on either remote.
+3. **`website/` is private.** It is excluded from the public repo by `.publish-ignore`. The website deploys separately via Cloudflare Pages.
+4. **`scripts/release.js` is private.** Internal release tooling stays in the private repo.
+5. **ML models are not committed.** `models/`, `Chatterbox-*/`, `python-bundle/` are gitignored and weigh 10–19GB.
+
+---
+
+## Key Commands
+
+```bash
+# Development
+bun run dev                 # Start Electron app with hot reload
+
+# Releasing
+bun run release             # Build DMG + publish GitHub Release to mkmk10k/rift
+bun run release:dry         # Preview release without publishing
+
+# Public repo sync
+bun run publish-public      # Sync curated source to mkmk10k/rift
+bun run publish-public:dry  # Preview what would be synced
+
+# Building without releasing
+bun run package:dmg         # Build DMG only
+bun run build               # TypeScript compile only
+
+# Testing
+bun run evals               # Full eval suite
+bun run evals:quick         # LLM evals only
+bun run evals:release       # Release gate (must pass before release)
+```
+
+---
+
+## Website
+
+- Source lives at `website/` inside this repo
+- Deployed to **myrift.dev** via Cloudflare Pages (project name: `myrift-dev`)
+- Deployment is **direct upload** (not GitHub-connected) — deploy with:
+  ```bash
+  bun run deploy:website
+  ```
+- This runs `wrangler pages deploy website/ --project-name myrift-dev`
+- The separate `~/Code/myrift.dev/` folder is now **stale** — use `website/` instead
+
+---
+
+## Releases
+
+- Releases (DMG files) are published to `mkmk10k/rift` (public repo) so download links work
+- myrift.dev download buttons point to `github.com/mkmk10k/rift/releases/latest/download/...`
+- Release script (`scripts/release.js`) explicitly uses `--repo mkmk10k/rift`
+- After a release, run `bun run publish-public` to sync the source code too
+
+---
+
+## Public vs Private Boundary
+
+What goes in the public `mkmk10k/rift` repo (defined by `.publish-ignore`):
+
+| Public | Private (excluded) |
+|--------|-------------------|
+| `src/` — full app source | `website/` — marketing site |
+| `python/` — ML scripts | `scripts/release.js` — internal tooling |
+| `README.md`, `LICENSE`, `ROADMAP.md` | `.env*` — credentials |
+| `DECISIONS.md`, `QUICKSTART.md`, `INSTALL.md` | `test-engine/reports/` — raw results |
+| `test-engine/scenarios.ts` etc. | `test-engine/.cache/` — audio files |
+| `package.json` (sanitised by rsync) | `.cursor/` — IDE config |
+
+---
+
+## Credentials and Signing
+
+- Apple Developer credentials (for future notarization): store in `.env` or macOS Keychain
+- `.env` is gitignored — never appears in either repo
+- The app is currently **not notarized** (`identity: null` in package.json build config)
+- Users must right-click → Open on first launch until notarization is set up
+- When notarizing, needed env vars: `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`
+
+---
+
+## Other Folders (Historical — Not Active)
+
+These exist locally but are stale. Do not open them for Rift work:
+
+- `~/Code/playground/` — original scratch repo, Rift development has moved out
+- `~/Code/myrift.dev/` — old standalone website repo, replaced by `website/`
+- `~/Code/rift-backup/` — backup of pre-consolidation state, can be deleted

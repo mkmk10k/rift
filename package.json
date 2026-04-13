@@ -1,6 +1,6 @@
 {
   "name": "rift",
-  "version": "2026.01.04+7eaed1e",
+  "version": "2026.04.12+de62274",
   "description": "Rift - Your voice. Your Mac. Nothing else.",
   "main": "dist/main/main/index.js",
   "author": "Mikko Kiiskila",
@@ -13,22 +13,38 @@
     "build:renderer": "vite build",
     "build:electron": "tsc -p tsconfig.main.json && tsc -p tsconfig.preload.json",
     "version": "node scripts/update-version.js",
-    "package": "bun run version && bun run build && electron-builder --mac && node scripts/verify-build.js",
-    "package:dmg": "bun run version && bun run build && electron-builder --mac dmg && node scripts/verify-build.js",
-    "package:zip": "bun run version && bun run build && electron-builder --mac zip && node scripts/verify-build.js",
+    "package": "node scripts/check-bundle.js && bun run version && bun run build && electron-builder --mac --publish=never && node scripts/verify-build.js",
+    "package:dmg": "node scripts/check-bundle.js && bun run version && bun run build && electron-builder --mac dmg --publish=never && node scripts/verify-build.js",
+    "package:zip": "node scripts/check-bundle.js && bun run version && bun run build && electron-builder --mac zip --publish=never && node scripts/verify-build.js",
     "verify-build": "node scripts/verify-build.js",
     "start": "electron .",
     "test:live-paste": "npx ts-node test-engine/index.ts",
-    "test:live-paste:phase": "npx ts-node test-engine/index.ts --phase",
-    "test:live-paste:improve": "npx ts-node test-engine/index.ts --improve",
+    "test:installer": "npx ts-node test-engine/installer-tests.ts",
+    "test:installer:bundle": "npx ts-node test-engine/installer-tests.ts --bundle",
+    "test:installer:server": "npx ts-node test-engine/installer-tests.ts --server",
+    "test:installer:e2e": "npx ts-node test-engine/installer-tests.ts --e2e",
     "test:llm": "npx ts-node test-engine/llm-runner.ts",
-    "test:llm:phase2": "npx ts-node test-engine/llm-runner.ts --phase 2",
-    "test:llm:phase3": "npx ts-node test-engine/llm-runner.ts --phase 3",
-    "test:llm:phase4": "npx ts-node test-engine/llm-runner.ts --phase 4",
-    "test:all": "bun run test:live-paste && bun run test:llm",
+    "test:model-compare": "npx ts-node test-engine/model-comparison.ts",
+    "test:all": "bun run test:live-paste && bun run test:llm && bun run test:installer",
+    "evals": "npx ts-node test-engine/run-all-evals.ts",
+    "evals:quick": "npx ts-node test-engine/llm-runner.ts",
+    "evals:release": "npx ts-node test-engine/run-all-evals.ts --release-gate",
+    "evals:export": "npx ts-node test-engine/export-results.ts",
     "release": "node scripts/release.js",
-    "release:dry": "node scripts/release.js --dry-run",
-    "bundle:python": "node scripts/bundle-python.js"
+    "publish-public": "node scripts/publish-public.js",
+    "publish-public:dry": "node scripts/publish-public.js --dry-run",
+    "bundle:python": "node scripts/bundle-python.js",
+    "deploy:website": "wrangler pages deploy website/ --project-name myrift-dev --commit-dirty=true",
+    "deploy:diagnostics": "cd workers/rift-diagnostics && wrangler deploy",
+    "diagnostics:fetch": "curl -s \"https://rift-diagnostics.mikko-sj-kiiskila.workers.dev/reports?key=$RIFT_ADMIN_KEY\" | python3 -m json.tool",
+    "website:vendor-pretext": "mkdir -p website/vendor && cp node_modules/@chenglou/pretext/dist/layout.js website/vendor/pretext.mjs && cp node_modules/@chenglou/pretext/dist/bidi.js node_modules/@chenglou/pretext/dist/analysis.js node_modules/@chenglou/pretext/dist/measurement.js node_modules/@chenglou/pretext/dist/line-break.js website/vendor/",
+    "postinstall": "bun run website:vendor-pretext",
+    "website:lighthouse": "npx lighthouse@11 http://127.0.0.1:8899/ --only-categories=accessibility,seo,best-practices --chrome-flags='--headless --no-sandbox' --quiet",
+    "test:website": "bash scripts/website-visual-check.sh",
+    "test:website:update": "bash scripts/website-visual-test.sh",
+    "design:audit": "bash scripts/design-audit.sh",
+    "ci:first-launch-check": "bash scripts/first-launch-ci-check.sh",
+    "test:download-contract": "bun test-engine/model-download-contract-test.ts"
   },
   "keywords": [
     "voice",
@@ -40,23 +56,29 @@
     "apple-silicon"
   ],
   "devDependencies": {
+    "@electron/notarize": "^3.1.1",
     "@types/node": "^20.10.0",
     "@types/react": "^18.2.45",
     "@types/react-dom": "^18.2.18",
     "@vitejs/plugin-react": "^4.2.1",
+    "agent-browser": "^0.24.1",
     "autoprefixer": "^10.4.16",
     "concurrently": "^8.2.2",
-    "electron": "^28.3.3",
+    "dotenv": "^17.3.1",
+    "dotenv-cli": "^11.0.0",
+    "electron": "^40.0.0",
     "electron-builder": "^24.9.1",
     "postcss": "^8.4.32",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.3.3",
-    "vite": "^5.0.10",
+    "vite": "^7.3.1",
     "wait-on": "^9.0.3"
   },
   "dependencies": {
+    "@chenglou/pretext": "^0.0.3",
     "@electron/remote": "^2.1.1",
     "@types/three": "^0.182.0",
+    "electron-liquid-glass": "^1.1.1",
     "electron-store": "8.2.0",
     "ffmpeg-static": "^5.3.0",
     "react": "^18.2.0",
@@ -66,18 +88,56 @@
   },
   "build": {
     "appId": "dev.myrift.app",
+    "afterAllArtifactBuild": "scripts/notarize.js",
     "productName": "Rift",
     "artifactName": "${productName}-${version}-${arch}.${ext}",
     "npmRebuild": false,
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/uiohook-napi/**/*",
+      "node_modules/ffmpeg-static/**/*"
+    ],
     "directories": {
       "output": "dist-package"
     },
+    "extraResources": [
+      {
+        "from": "assets",
+        "to": "assets",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "python-bundle",
+        "to": "python",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "python",
+        "to": "python",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "setup",
+        "to": "setup",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
     "mac": {
+      "icon": "build/icon.png",
       "category": "public.app-category.productivity",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "entitlements.mac.plist",
       "entitlementsInherit": "entitlements.mac.plist",
+      "identity": "Mikko Kiiskilae (Z27G4HWLJE)",
       "target": [
         {
           "target": "dmg",
@@ -110,55 +170,7 @@
     },
     "files": [
       "dist/**/*",
-      "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "python-bundle",
-        "to": "python",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "python",
-        "to": "python",
-        "filter": [
-          "*.py",
-          "*.json",
-          "*.wav"
-        ]
-      },
-      {
-        "from": "assets",
-        "to": ".",
-        "filter": [
-          "*.png"
-        ]
-      },
-      {
-        "from": "tools",
-        "to": "tools",
-        "filter": [
-          "type-text",
-          "paste-text",
-          "ax-insert-text",
-          "inject-text",
-          "switch-input"
-        ]
-      },
-      {
-        "from": "input-method/build",
-        "to": "input-method",
-        "filter": [
-          "**/*"
-        ]
-      }
-    ],
-    "asar": true,
-    "asarUnpack": [
-      "node_modules/uiohook-napi/**/*",
-      "node_modules/ffmpeg-static/**/*"
+      "!dist/renderer/assets/*.map"
     ]
   }
 }

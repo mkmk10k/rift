@@ -1,0 +1,425 @@
+---
+description: Rules for building memory-safe self-improving test engines
+globs: ["**/test-engine/**", "**/*.test.ts", "**/*.spec.ts"]
+alwaysApply: false
+---
+
+# Memory-Safe Self-Improving Test Engines
+
+## Problem Statement
+
+When building automated test engines that spawn external processes (especially ML models, servers, or other memory-intensive operations), it's critical to manage memory explicitly. Without proper lifecycle management, tests can consume all system memory and freeze the machine.
+
+## Key Learnings
+
+### 1. Heavy Process Lifecycle Management
+
+**Rule:** Never spawn heavy processes (ML models, servers) without explicit lifecycle tracking.
+
+```typescript
+// BAD: Singleton without health checking
+let server: Server | null = null;
+function getServer() {
+  if (!server) server = new Server();
+  return server;
+}
+
+// GOOD: Lifecycle-aware singleton
+let server: Server | null = null;
+let usageCount = 0;
+const MAX_USES = 5;
+
+function getServer() {
+  // Check if needs restart due to memory accumulation
+  if (server && usageCount >= MAX_USES) {
+    server.stop();
+    server = null;
+    usageCount = 0;
+    await sleep(2000); // Let process fully exit
+  }
+  
+  // Check if dead
+  if (server && !server.isAlive()) {
+    server.stop();
+    server = null;
+  }
+  
+  if (!server) {
+    server = new Server();
+    await server.start();
+  }
+  
+  return server;
+}
+```
+
+### 2. Explicit Buffer Cleanup
+
+**Rule:** Large data buffers (audio, images, etc.) must be explicitly nullified after use.
+
+```typescript
+// BAD: Buffers live until GC decides to collect
+async function runTest() {
+  const audioData = loadAudio(file);
+  const chunks = splitIntoChunks(audioData);
+  // ... use chunks ...
+  return result; // audioData and chunks still in memory
+}
+
+// GOOD: Explicit cleanup in finally block
+async function runTest() {
+  let audioData: Float32Array | null = null;
+  let chunks: Float32Array[] = [];
+  
+  try {
+    audioData = loadAudio(file);
+    chunks = splitIntoChunks(audioData);
+    // ... use chunks ...
+    return result;
+  } finally {
+    // Explicit cleanup
+    audioData = null;
+    chunks = [];
+  }
+}
+```
+
+### 3. Timeout Enforcement
+
+**Rule:** Every test scenario must have a maximum duration timeout.
+
+```typescript
+const MAX_SCENARIO_DURATION_MS = 120_000; // 2 minutes
+
+async function runScenario() {
+  const startTime = Date.now();
+  
+  try {
+    // ... run test ...
+  } finally {
+    const duration = Date.now() - startTime;
+    if (duration > MAX_SCENARIO_DURATION_MS) {
+      console.warn(`Scenario exceeded time limit: ${duration}ms`);
+    }
+  }
+}
+```
+
+### 4. Handle SIGPIPE and Early Pipe Consumer Exit
+
+**Rule:** Register signal handlers for SIGINT, SIGTERM, and SIGPIPE to ensure cleanup runs even when piped to commands like `head` or `grep` that exit early.
+
+**Problem:** When you run a test like `npx ts-node test-engine/index.ts | head -40`, and `head` exits after receiving 40 lines, the Node process receives SIGPIPE. The `finally` block in your main function may NOT run, leaving spawned child processes (like STT/ML servers) orphaned and consuming memory.
+
+```typescript
+// BAD: Cleanup only in finally block
+async function main() {
+  try {
+    await runAllTests();
+  } finally {
+    stopServer(); // May not run if piped to `head` or `grep`!
+  }
+}
+
+// GOOD: Register signal handlers for cleanup
+function registerCleanupHandlers() {
+  const cleanup = () => {
+    console.log('[Cleanup] Signal received, stopping servers...');
+    stopServer();
+    process.exit(0);
+  };
+  
+  process.on('SIGINT', cleanup);   // Ctrl+C
+  process.on('SIGTERM', cleanup);  // kill command
+  process.on('SIGPIPE', cleanup);  // Pipe consumer exited (head, grep, etc.)
+  
+  // Also handle uncaught exceptions
+  process.on('uncaughtException', (err) => {
+    console.error('[Cleanup] Uncaught exception:', err);
+    stopServer();
+    process.exit(1);
+  });
+}
+
+// Call early in main()
+async function main() {
+  registerCleanupHandlers();
+  
+  try {
+    await runAllTests();
+  } finally {
+    stopServer();
+  }
+}
+```
+
+**Real-world example of orphaned processes:**
+```bash
+# Running multiple test commands that spawn STT servers:
+npx ts-node test-engine/index.ts | tail -80 &   # Spawns STT server PID 15323
+npx ts-node test-engine/index.ts | head -40 &   # Spawns STT server PID 17608
+npx ts-node test-engine/index.ts | grep FAILED & # Spawns STT server PID 21183
+
+# Result: 3 orphaned Python processes consuming 150+ MB each!
+# System: 15GB used, 74MB free → machine freezes
+
+# To diagnose:
+ps aux | grep stt_server | grep -v grep
+
+# To cleanup:
+pkill -f "python.*stt_server.py"
+```
+
+### 5. Force Kill on Stop
+
+**Rule:** When stopping external processes, use SIGTERM then SIGKILL.
+
+```typescript
+// BAD: Just kill
+stop() {
+  this.process?.kill();
+}
+
+// GOOD: Graceful then force
+stop() {
+  if (this.process) {
+    this.process.kill('SIGTERM');
+    setTimeout(() => {
+      if (this.process && !this.process.killed) {
+        this.process.kill('SIGKILL');
+      }
+    }, 2000);
+  }
+  this.cleanup();
+}
+```
+
+### 6. Pending Request Queue Cleanup
+
+**Rule:** Clear all pending promises/callbacks when stopping a service.
+
+```typescript
+// BAD: Orphaned promises
+stop() {
+  this.process?.kill();
+  this.process = null;
+}
+
+// GOOD: Reject all pending
+private cleanup() {
+  for (const pending of this.responseQueue) {
+    clearTimeout(pending.timeoutId);
+    pending.reject(new Error('Server stopped'));
+  }
+  this.responseQueue = [];
+  // ... rest of cleanup
+}
+```
+
+### 7. Buffer Size Limits
+
+**Rule:** Reject operations that exceed safe buffer sizes.
+
+```typescript
+const MAX_BUFFER_SIZE = 50_000_000; // 50MB
+
+async function processBuffer(data: string) {
+  if (data.length > MAX_BUFFER_SIZE) {
+    throw new Error(`Buffer too large: ${data.length} > ${MAX_BUFFER_SIZE}`);
+  }
+  // ... process ...
+}
+```
+
+## Self-Improving Test Engine Patterns
+
+### 1. Separate Unit Tests from Integration Tests
+
+- **Unit tests** (like stable-prefix-unit.ts): Test algorithm logic without spawning heavy processes
+- **Integration tests** (like the full test runner): Spawn actual STT/ML servers
+
+Run unit tests frequently, integration tests sparingly.
+
+### 2. Test the Algorithm, Not Just the Output
+
+```typescript
+// GOOD: Test returns action taken, not just result
+function testAlgorithm(input) {
+  return { 
+    action: 'anchor-append',  // What strategy was used
+    result: '...',            // The output
+  };
+}
+```
+
+### 3. Fail Fast for Memory Issues
+
+```typescript
+// Log memory at key points
+function logMemory(label: string) {
+  const used = process.memoryUsage();
+  console.log(`[Memory:${label}] RSS: ${(used.rss / 1024 / 1024).toFixed(1)}MB`);
+}
+```
+
+### 4. Don't Self-Improve in Infinite Loops
+
+```typescript
+// BAD: Loop forever until passing
+while (!allTestsPass) {
+  runTests();
+  // ... no exit condition
+}
+
+// GOOD: Max iterations with human handoff
+const MAX_ITERATIONS = 10;
+for (let i = 0; i < MAX_ITERATIONS; i++) {
+  const results = runTests();
+  if (results.allPassed) break;
+  
+  console.log('Suggestions for manual review:', results.suggestions);
+  await sleep(5000); // Pause for potential intervention
+}
+```
+
+## Checklist for Building Test Engines
+
+- [ ] External processes have lifecycle tracking (start, isAlive, stop)
+- [ ] Periodic restart of heavy processes (every N uses)
+- [ ] Explicit buffer cleanup in finally blocks
+- [ ] Maximum scenario duration timeout
+- [ ] **Signal handlers for SIGINT/SIGTERM/SIGPIPE cleanup** (prevents orphans when piped)
+- [ ] Force kill (SIGKILL) after graceful timeout
+- [ ] Pending request queue cleanup on stop
+- [ ] Buffer size limits enforced
+- [ ] Unit tests for algorithm logic (no heavy processes)
+- [ ] Memory logging at key points
+- [ ] Max iterations for self-improvement loops
+- [ ] Human handoff when max iterations reached
+
+## Pre-Flight Check: Kill Orphaned Servers (AUTOMATED)
+
+**This is now automated in `test-engine/index.ts`** via `killOrphanedProcesses()`.
+
+The pre-flight check automatically:
+1. **Detects orphaned STT/TTS Python servers** from previous runs
+2. **Kills them** to free memory
+3. **Waits 2 seconds** for cleanup to complete
+
+```typescript
+// This runs automatically at the start of every test run
+async function killOrphanedProcesses(): Promise<void> {
+  // Only kill orphaned Python servers - NOT other test-engines
+  // (Killing test-engines was causing self-destruction issues)
+  const orphanedServers = countProcesses('python.*(stt_server|tts_server)');
+  if (orphanedServers > 0) {
+    console.log('[PreFlight] Cleaning up orphaned servers...');
+    execSync('pkill -9 -f "python.*stt_server.py"');
+    execSync('pkill -9 -f "python.*tts_server.py"');
+    await sleep(2000);
+  }
+}
+```
+
+**You'll see this in the console when it activates:**
+```
+[PreFlight] Found 2 existing server process(es), cleaning up...
+[PreFlight] Cleanup complete
+```
+
+**Important:** We do NOT automatically kill other test-engine processes because:
+- The grep pattern was matching the current process
+- Killing test-engines was causing the test to kill itself
+- Better to let the agent manually check and kill if needed
+
+## NEVER Run Multiple Test Engines in Parallel
+
+**Rule:** Only ONE test-engine instance should run at a time. Running multiple instances:
+- Spawns multiple STT servers (each ~100MB)
+- Creates resource contention
+- Makes cleanup impossible (which PID to kill?)
+
+```bash
+# BAD: Running tests in background while another is running
+npx ts-node test-engine/index.ts &   # Spawns STT server
+npx ts-node test-engine/index.ts &   # Spawns ANOTHER STT server
+# Result: 2+ STT servers fighting for GPU/memory
+
+# GOOD: Run sequentially, wait for completion
+npx ts-node test-engine/index.ts --scenario test1
+# Wait for complete exit
+npx ts-node test-engine/index.ts --scenario test2
+```
+
+## Agent Workflow for Running Tests
+
+When the AI agent runs tests, follow this exact sequence:
+
+1. **Check for orphans first:**
+   ```bash
+   ps aux | grep -E "(stt_server|test-engine)" | grep -v grep
+   ```
+
+2. **Kill any found:**
+   ```bash
+   pkill -9 -f "python.*stt_server.py"
+   pkill -9 -f "ts-node.*test-engine"
+   sleep 3
+   ```
+
+3. **Verify cleanup:**
+   ```bash
+   ps aux | grep -E "(stt_server|test-engine)" | grep -v grep | wc -l
+   # Should output: 0
+   ```
+
+4. **Run ONE test at a time:**
+   ```bash
+   npx ts-node ... test-engine/index.ts --scenario X
+   # Wait for FULL completion before running next
+   ```
+
+5. **After all tests, verify cleanup again**
+
+## Debugging Orphaned Processes
+
+If you suspect memory leaks from orphaned test processes:
+
+```bash
+# Find orphaned STT/TTS servers
+ps aux | grep -E "stt_server|tts_server" | grep -v grep
+
+# Find orphaned test-engine processes
+pgrep -lf "ts-node.*test-engine"
+
+# Kill all orphaned processes (use -9 for force kill)
+pkill -9 -f "python.*stt_server.py"
+pkill -9 -f "python.*tts_server.py"
+pkill -9 -f "ts-node.*test-engine"
+pkill -9 -f "npm.*exec.*ts-node"
+
+# Wait for cleanup
+sleep 3
+
+# Check memory recovery
+ps aux | grep -E "(stt_server|tts_server)" | grep -v grep
+# Should be empty
+
+# Check total Python memory
+ps aux | grep python | grep -v grep | awk '{sum+=$6} END {print "Python memory: " sum/1024 " MB"}'
+```
+
+## Memory Budget Guidelines
+
+For a typical development machine with 16GB RAM:
+- **Single STT server:** ~80-150MB (acceptable)
+- **Single test-engine:** ~100-250MB (acceptable)
+- **App + STT + TTS:** ~300-500MB total (acceptable)
+- **WARNING threshold:** >1GB for test/server processes
+- **DANGER threshold:** >2GB - kill everything immediately
+
+If memory exceeds warning threshold:
+1. Stop all test-engine runs
+2. Kill orphaned processes
+3. Restart only what's needed
+4. Run tests one at a time

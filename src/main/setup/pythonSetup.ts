@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { getSetting, setSetting } from '../services/settings';
+import { sendDiagnostics } from '../services/diagnosticsReporter';
 
 /**
  * Collect comprehensive system diagnostics for troubleshooting.
@@ -30,7 +31,7 @@ export function collectDiagnostics(): string {
   lines.push('--- PYTHON BUNDLE ---');
   const bundledPath = app.isPackaged
     ? path.join(process.resourcesPath, 'python', 'bin', 'python3.11')
-    : path.join(__dirname, '../../../python-bundle/bin/python3.11');
+    : path.join(app.getAppPath(), 'python-bundle', 'bin', 'python3.11');
   
   lines.push(`Expected path: ${bundledPath}`);
   lines.push(`Exists: ${fs.existsSync(bundledPath)}`);
@@ -44,7 +45,7 @@ export function collectDiagnostics(): string {
     }
     
     // Check each package (use pip show to avoid import which triggers Metal GPU init)
-    const packages = ['mlx', 'mlx-lm', 'parakeet-mlx', 'kokoro', 'huggingface_hub'];
+    const packages = ['mlx', 'mlx-lm', 'parakeet-mlx', 'mlx-audio', 'huggingface_hub'];
     lines.push('');
     lines.push('--- PACKAGE STATUS ---');
     for (const pkg of packages) {
@@ -114,7 +115,7 @@ export function collectDiagnostics(): string {
 }
 
 /**
- * Show error dialog with diagnostics that user can copy.
+ * Show error dialog with diagnostics that user can send directly or copy.
  */
 async function showErrorWithDiagnostics(
   title: string,
@@ -127,19 +128,41 @@ async function showErrorWithDiagnostics(
     type: 'error',
     title,
     message,
-    detail: `${detail}\n\nClick "Copy Diagnostics" to copy troubleshooting info you can share.`,
-    buttons: ['Copy Diagnostics', 'OK'],
+    detail: `${detail}\n\nYou can send a diagnostic report directly to the developer, or copy it to clipboard.`,
+    buttons: ['Send Report to Mikko', 'Copy Diagnostics', 'OK'],
   });
   
   if (result.response === 0) {
+    // Send diagnostics to remote endpoint
+    const sendResult = await sendDiagnostics(diagnostics, message);
+    
+    if (sendResult.success) {
+      await dialog.showMessageBox({
+        type: 'info',
+        title: 'Report Sent',
+        message: 'Diagnostic report sent successfully!',
+        detail: `${sendResult.message || 'Mikko will investigate the issue.'}\n\nReport ID: ${sendResult.id || 'N/A'}`,
+        buttons: ['OK'],
+      });
+    } else {
+      // Network failed — fall back to clipboard copy
+      clipboard.writeText(diagnostics);
+      await dialog.showMessageBox({
+        type: 'warning',
+        title: 'Could Not Send Report',
+        message: 'Unable to send the report automatically.',
+        detail: `${sendResult.error || 'Network error'}\n\nDiagnostics have been copied to your clipboard instead. You can paste them into a GitHub issue.`,
+        buttons: ['Open GitHub Issues', 'OK'],
+      });
+    }
+  } else if (result.response === 1) {
     clipboard.writeText(diagnostics);
     
-    // Show confirmation and offer to open GitHub issues
     const followUp = await dialog.showMessageBox({
       type: 'info',
       title: 'Diagnostics Copied',
       message: 'Diagnostics copied to clipboard!',
-      detail: 'You can now paste this into a GitHub issue or send to support.',
+      detail: 'You can paste this into a GitHub issue or send to support.',
       buttons: ['Open GitHub Issues', 'OK'],
     });
     
@@ -165,8 +188,8 @@ function getBundledPythonPath(): string | null {
     console.error('[Python] Bundled Python not found at:', bundledPath);
     return null;
   } else {
-    // Development: check for local python-bundle first, then fall back to system
-    const devBundlePath = path.join(__dirname, '../../../python-bundle/bin/python3.11');
+    // Development: project root via getAppPath() (stable vs dist/main/main/__dirname depth)
+    const devBundlePath = path.join(app.getAppPath(), 'python-bundle', 'bin', 'python3.11');
     if (fs.existsSync(devBundlePath)) {
       return devBundlePath;
     }
@@ -220,6 +243,14 @@ function findSystemPython(): string | null {
 }
 
 /**
+ * In dev, electron-store may still point at a installed Rift.app bundle from a prior
+ * packaged run — that interpreter can lag repo code (e.g. mlx-lm without Gemma4).
+ */
+function isDevPythonPathFromPackagedRiftInstall(p: string): boolean {
+  return /\/Applications\/Rift\.app\//i.test(p);
+}
+
+/**
  * Get the Python path to use for the app.
  * In production: ALWAYS use bundled Python (ignore cache)
  * In development: Use cache or find system Python
@@ -238,19 +269,30 @@ export function findPythonPath(): string | null {
     return null;
   }
 
-  // Development: check cached path first
+  // Development: prefer repo python-bundle when present (reliable mlx for evals / dev)
+  const bundleOrSystem = getBundledPythonPath();
+  if (
+    bundleOrSystem &&
+    bundleOrSystem.includes(`${path.sep}python-bundle${path.sep}`)
+  ) {
+    setSetting('pythonPath', bundleOrSystem);
+    return bundleOrSystem;
+  }
+
+  // Development: optional cached path (never use another app's bundle)
   const cachedPath = getSetting('pythonPath');
-  if (cachedPath && fs.existsSync(cachedPath)) {
+  if (cachedPath && isDevPythonPathFromPackagedRiftInstall(cachedPath)) {
+    console.log('[Python] Ignoring cached pythonPath from packaged install in dev:', cachedPath);
+    setSetting('pythonPath', null);
+  } else if (cachedPath && fs.existsSync(cachedPath)) {
     return cachedPath;
   }
 
-  // Get bundled or system Python
-  const pythonPath = getBundledPythonPath();
-  if (pythonPath) {
-    setSetting('pythonPath', pythonPath);
+  if (bundleOrSystem) {
+    setSetting('pythonPath', bundleOrSystem);
   }
-  
-  return pythonPath;
+
+  return bundleOrSystem;
 }
 
 /**
@@ -291,7 +333,7 @@ export function checkLLMInstalled(pythonPath: string): boolean {
  */
 export function checkTTSInstalled(pythonPath: string): boolean {
   try {
-    execSync(`"${pythonPath}" -c "import kokoro"`, {
+    execSync(`"${pythonPath}" -c "import mlx_audio"`, {
       timeout: 10000,
       stdio: 'pipe',
     });
@@ -351,8 +393,9 @@ export async function runSetupCheck(mainWindow: BrowserWindow | null): Promise<b
 
   // Verify MLX dependencies
   if (checkMLXInstalled(pythonPath)) {
-    console.log('[Setup] All dependencies verified');
-    setSetting('setupComplete', true);
+    console.log('[Setup] All dependencies verified - Python is ready');
+    // NOTE: Don't set setupComplete here - let the setup wizard do that
+    // This function just verifies Python is usable
     return true;
   }
 

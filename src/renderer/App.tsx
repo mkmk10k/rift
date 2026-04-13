@@ -7,7 +7,7 @@ import { BlackHoleOrb, OrbState } from './components/BlackHoleOrb'
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════════
- * OUTLOUD LIVE PASTE ENGINE - COMPREHENSIVE FEATURE DOCUMENTATION
+ * RIFT LIVE PASTE ENGINE - COMPREHENSIVE FEATURE DOCUMENTATION
  * ═══════════════════════════════════════════════════════════════════════════════
  * 
  * This file contains the complete Live Paste engine that turns MLX Parakeet STT
@@ -160,10 +160,13 @@ function App() {
   const [livePasteMode, setLivePasteMode] = useState(true)
   const [autoSendAfterDictation, setAutoSendAfterDictation] = useState(false)
   const [dictationMode, setDictationMode] = useState<'toggle' | 'hold'>('toggle')
+  const [ttsModel, setTtsModel] = useState<'kokoro' | 'chatterbox' | 'chatterbox-turbo' | 'chatterbox-full-mlx'>('kokoro')
+  const [ttsVoiceKokoro, setTtsVoiceKokoro] = useState('af_heart')
+  const [ttsVoiceChatterbox, setTtsVoiceChatterbox] = useState('chloe')
   
   // Internal state
   const [modelReady, setModelReady] = useState(false)
-  const [partialText, setPartialText] = useState('')
+  const [_partialText, setPartialText] = useState('')
   
   // Refs for performance (avoid re-renders from audio levels)
   const audioLevelRef = useRef(0)
@@ -171,6 +174,7 @@ function App() {
   const streamQueueRef = useRef<StreamingAudioQueue | null>(null)
   const realtimeQueueRef = useRef<RealtimeAudioQueue | null>(null)
   const playbackSpeedRef = useRef(1.0)
+  const ttsVoiceRef = useRef('af_heart')
   const isRecordingRef = useRef(false)
   const modelReadyRef = useRef(false)
   // ═══════════════════════════════════════════════════════════════════════════
@@ -263,21 +267,21 @@ function App() {
   // Stability threshold: word must appear this many times to be considered stable
   // Lower = faster but more risk of incorrect words, Higher = slower but safer
   // 2 is a good balance - catches most stable words quickly
-  const STABILITY_THRESHOLD = 2
+  // const STABILITY_THRESHOLD = 2  // Unused - kept for reference
   
   // Helper: Tracked live paste that increments paste count and updates BE state
   // This enables reliable undo-based final correction and BE-driven silence polish
   const trackedLivePaste = useCallback(async (text: string, previousLength: number) => {
-    const result = await window.outloud?.text?.livePaste?.({ text, previousLength })
+    const result = await window.rift?.text?.livePaste?.({ text, previousLength })
     if (result?.success) {
       pasteCountRef.current++
       // Keep BE in sync with pasted text for silence polish
-      window.outloud?.llm?.updatePastedText?.(text, pasteCountRef.current)
+      window.rift?.llm?.updatePastedText?.(text, pasteCountRef.current)
       // New paste = speech activity, reset BE silence timer
-      window.outloud?.llm?.notifySpeechDetected?.()
+      window.rift?.llm?.notifySpeechDetected?.()
       
       // Record for test capture (if enabled)
-      window.outloud?.testCapture?.recordPaste?.({
+      window.rift?.testCapture?.recordPaste?.({
         type: 'live-paste',
         text: text,
         delta: text.substring(previousLength),
@@ -291,18 +295,22 @@ function App() {
   
   // Helper: Tracked correction that also counts as a paste (for undo)
   const trackedCorrectLivePaste = useCallback(async (charsToReplace: number, correctText: string) => {
-    const result = await window.outloud?.text?.correctLivePaste?.({ charsToReplace, correctText })
+    const result = await window.rift?.text?.correctLivePaste?.({ charsToReplace, correctText })
     if (result?.success) {
       pasteCountRef.current++ // Correction replaces, but still adds 1 paste
       // Keep BE in sync with corrected text
-      window.outloud?.llm?.updatePastedText?.(correctText, pasteCountRef.current)
-      window.outloud?.llm?.notifySpeechDetected?.()
+      window.rift?.llm?.updatePastedText?.(correctText, pasteCountRef.current)
+      window.rift?.llm?.notifySpeechDetected?.()
     }
     return result
   }, [])
   
   // Sync refs with state
   useEffect(() => { playbackSpeedRef.current = playbackSpeed }, [playbackSpeed])
+  // Update voice ref based on current model
+  useEffect(() => { 
+    ttsVoiceRef.current = ttsModel === 'chatterbox' ? ttsVoiceChatterbox : ttsVoiceKokoro
+  }, [ttsModel, ttsVoiceKokoro, ttsVoiceChatterbox])
   useEffect(() => { modelReadyRef.current = modelReady }, [modelReady])
   useEffect(() => { isRecordingRef.current = orbState === 'listening' }, [orbState])
   
@@ -360,7 +368,7 @@ function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setIsVisible(false)
-        setTimeout(() => window.outloud?.window?.hide(), 150)
+        setTimeout(() => window.rift?.window?.hide(), 150)
       }
     }
     document.addEventListener('keydown', handleKeyDown)
@@ -377,14 +385,14 @@ function App() {
   // BE monitors for 5s+ silence and triggers polish automatically
   // ═══════════════════════════════════════════════════════════════════════════
   useEffect(() => {
-    if (!window.outloud?.llm?.onSilencePolishResult) return
+    if (!window.rift?.llm?.onSilencePolishResult) return
     
-    const cleanup = window.outloud.llm.onSilencePolishResult((result) => {
+    const cleanup = window.rift.llm.onSilencePolishResult((result) => {
       console.log('[Silence Polish] Received from BE:', result.polished?.slice(0, 50) + '...')
       
       // Record for test capture (if enabled)
       const previousText = pastedTextRef.current
-      window.outloud?.testCapture?.recordPaste?.({
+      window.rift?.testCapture?.recordPaste?.({
         type: 'silence-polish',
         text: result.polished,
         delta: result.polished,  // Entire replacement
@@ -394,7 +402,7 @@ function App() {
       })
       
       // Apply the polish via undo-and-replace
-      window.outloud?.text?.undoAndReplace?.({
+      window.rift?.text?.undoAndReplace?.({
         undoCount: result.undoCount,
         correctText: result.polished
       }).then((correctionResult) => {
@@ -414,7 +422,7 @@ function App() {
           lockedSentenceCountRef.current = polishedSentences.length
           
           // Notify BE of new text state
-          window.outloud?.llm?.updatePastedText?.(result.polished, 1)
+          window.rift?.llm?.updatePastedText?.(result.polished, 1)
           
           // CRITICAL: Track this polished text to prevent Final Polish from
           // re-processing it and creating duplicates
@@ -436,16 +444,16 @@ function App() {
   useEffect(() => {
     const checkModels = async () => {
       try {
-        if (!window.outloud) {
+        if (!window.rift) {
           setTimeout(checkModels, 1000)
           return
         }
-        const result = await window.outloud.models.check()
+        const result = await window.rift.models.check()
         setModelReady(result.available)
         
         if (result.available) {
           // Warmup for faster first inference
-          await window.outloud?.stt?.warmup()
+          await window.rift?.stt?.warmup()
         }
       } catch (error) {
         console.error('Model check failed:', error)
@@ -465,7 +473,7 @@ function App() {
   useEffect(() => {
     const loadSettings = async () => {
       try {
-        const settings = await window.outloud?.settings?.getAll()
+        const settings = await window.rift?.settings?.getAll()
         if (settings) {
           if (settings.playbackSpeed) {
             setPlaybackSpeed(settings.playbackSpeed)
@@ -475,6 +483,9 @@ function App() {
           if (typeof settings.showLivePreview === 'boolean') setShowLivePreview(settings.showLivePreview)
           if (typeof settings.livePasteMode === 'boolean') setLivePasteMode(settings.livePasteMode)
           if (typeof settings.autoSendAfterDictation === 'boolean') setAutoSendAfterDictation(settings.autoSendAfterDictation)
+          if (settings.ttsModel) setTtsModel(settings.ttsModel)
+          if (settings.ttsVoiceKokoro) setTtsVoiceKokoro(settings.ttsVoiceKokoro)
+          if (settings.ttsVoiceChatterbox) setTtsVoiceChatterbox(settings.ttsVoiceChatterbox)
         }
       } catch (err) {
         console.error('[Settings] Failed to load:', err)
@@ -483,7 +494,7 @@ function App() {
     loadSettings()
     
     // Listen for settings changes from tray menu
-    const cleanup = window.outloud?.settings?.onUpdate?.((key: string, value: any) => {
+    const cleanup = window.rift?.settings?.onUpdate?.((key: string, value: any) => {
       if (key === 'playbackSpeed') {
         setPlaybackSpeed(value)
         playbackSpeedRef.current = value
@@ -492,6 +503,9 @@ function App() {
       if (key === 'showLivePreview') setShowLivePreview(value)
       if (key === 'livePasteMode') setLivePasteMode(value)
       if (key === 'autoSendAfterDictation') setAutoSendAfterDictation(value)
+      if (key === 'ttsModel') setTtsModel(value)
+      if (key === 'ttsVoiceKokoro') setTtsVoiceKokoro(value)
+      if (key === 'ttsVoiceChatterbox') setTtsVoiceChatterbox(value)
     })
     
     return cleanup
@@ -499,8 +513,8 @@ function App() {
   
   // Audio playback listener
   useEffect(() => {
-    if (window.outloud?.audio?.onPlayFile) {
-      window.outloud.audio.onPlayFile(async (audioPath: string) => {
+    if (window.rift?.audio?.onPlayFile) {
+      window.rift.audio.onPlayFile(async (audioPath: string) => {
         try {
           setOrbState('playing')
           await audioPlayer.play(audioPath)
@@ -511,7 +525,7 @@ function App() {
             shouldAutoHideRef.current = false
             setTimeout(() => {
               setIsVisible(false)
-              setTimeout(() => window.outloud?.window?.hide(), 200)
+              setTimeout(() => window.rift?.window?.hide(), 200)
             }, 300)
           }
         } catch (error) {
@@ -525,20 +539,20 @@ function App() {
   
   // Streaming TTS listeners (legacy)
   useEffect(() => {
-    if (window.outloud?.tts?.onStreamChunk) {
-      window.outloud.tts.onStreamChunk((chunk) => {
+    if (window.rift?.tts?.onStreamChunk) {
+      window.rift.tts.onStreamChunk((chunk) => {
         streamQueueRef.current?.addChunk(chunk.dataUrl, chunk.chunkIndex, chunk.totalChunks)
       })
     }
     
-    if (window.outloud?.tts?.onStreamComplete) {
-      window.outloud.tts.onStreamComplete(() => {
+    if (window.rift?.tts?.onStreamComplete) {
+      window.rift.tts.onStreamComplete(() => {
         streamQueueRef.current?.markComplete()
       })
     }
     
-    if (window.outloud?.tts?.onStreamError) {
-      window.outloud.tts.onStreamError((error) => {
+    if (window.rift?.tts?.onStreamError) {
+      window.rift.tts.onStreamError((error) => {
         console.error('[Streaming] Error:', error.error)
         setOrbState('idle')
       })
@@ -547,8 +561,8 @@ function App() {
   
   // Realtime TTS listeners - for faster streaming playback
   useEffect(() => {
-    if (window.outloud?.tts?.onRealtimeChunk) {
-      window.outloud.tts.onRealtimeChunk((chunk) => {
+    if (window.rift?.tts?.onRealtimeChunk) {
+      window.rift.tts.onRealtimeChunk((chunk) => {
         // First chunk triggers playing state immediately
         if (chunk.chunkIndex === 0) {
           setOrbState('playing')
@@ -557,14 +571,14 @@ function App() {
       })
     }
     
-    if (window.outloud?.tts?.onRealtimeComplete) {
-      window.outloud.tts.onRealtimeComplete(() => {
+    if (window.rift?.tts?.onRealtimeComplete) {
+      window.rift.tts.onRealtimeComplete(() => {
         realtimeQueueRef.current?.markComplete()
       })
     }
     
-    if (window.outloud?.tts?.onRealtimeError) {
-      window.outloud.tts.onRealtimeError((error) => {
+    if (window.rift?.tts?.onRealtimeError) {
+      window.rift.tts.onRealtimeError((error) => {
         console.error('[Realtime TTS] Error:', error.error)
         setOrbState('idle')
       })
@@ -575,18 +589,18 @@ function App() {
   useEffect(() => {
     let isProcessing = false
     
-    if (window.outloud?.shortcuts?.onReadSelection) {
-      window.outloud.shortcuts.onReadSelection(async () => {
+    if (window.rift?.shortcuts?.onReadSelection) {
+      window.rift.shortcuts.onReadSelection(async () => {
         if (isProcessing || !modelReadyRef.current) return
         isProcessing = true
         
         try {
-          const result = await window.outloud.text.getSelection()
+          const result = await window.rift.text.getSelection()
           
           if (result.success && result.text?.trim()) {
             // Show the orb window for TTS playback
             setIsVisible(true)
-            await window.outloud?.window?.show?.()
+            await window.rift?.window?.show?.()
             
             // ALWAYS stop any previous playback first - user wants fresh start
             realtimeQueueRef.current?.stop()
@@ -601,14 +615,14 @@ function App() {
             realtimeQueueRef.current?.setOnFinish(() => {
               setTimeout(() => {
                 setIsVisible(false)
-                setTimeout(() => window.outloud?.window?.hide(), 200)
+                setTimeout(() => window.rift?.window?.hide(), 200)
               }, 300)
             })
             
             // Use REALTIME TTS for faster streaming playback
-            const ttsResult = await window.outloud.tts.synthesizeRealtime({
+            const ttsResult = await window.rift.tts.synthesizeRealtime({
               text: result.text,
-              voice: 'af_heart',
+              voice: ttsVoiceRef.current,
               speed: playbackSpeedRef.current,
               useLocal: true
             }) as { success: boolean; error?: string }
@@ -631,8 +645,8 @@ function App() {
   
   // Voice dictation shortcut (Cmd+Shift+S)
   useEffect(() => {
-    if (window.outloud?.shortcuts?.onVoiceDictation) {
-      window.outloud.shortcuts.onVoiceDictation(() => {
+    if (window.rift?.shortcuts?.onVoiceDictation) {
+      window.rift.shortcuts.onVoiceDictation(() => {
         console.log(`[Shortcut] Voice dictation pressed: dictationMode=${dictationMode}, isRecording=${isRecordingRef.current}, orbState=${orbState}`)
         if (dictationMode === 'toggle') {
           console.log('[Shortcut] Calling handleRecordToggle...')
@@ -646,8 +660,8 @@ function App() {
 
   // Pause audio shortcut (Cmd+Shift+W when hiding widget)
   useEffect(() => {
-    if (window.outloud?.shortcuts?.onPauseAudio) {
-      window.outloud.shortcuts.onPauseAudio(() => {
+    if (window.rift?.shortcuts?.onPauseAudio) {
+      window.rift.shortcuts.onPauseAudio(() => {
         if (orbState === 'playing') {
           realtimeQueueRef.current?.pause()
           setOrbState('paused')
@@ -658,15 +672,15 @@ function App() {
   
   // Test TTS handler (from tray menu)
   useEffect(() => {
-    if (window.outloud?.shortcuts?.onTestTTS) {
-      window.outloud.shortcuts.onTestTTS(async () => {
+    if (window.rift?.shortcuts?.onTestTTS) {
+      window.rift.shortcuts.onTestTTS(async () => {
         if (!modelReadyRef.current) return
         
         setOrbState('processing')
         try {
-          await window.outloud.tts.synthesize({
+          await window.rift.tts.synthesize({
             text: 'Hello! Rift is working perfectly.',
-            voice: 'af_heart',
+            voice: ttsVoiceRef.current,
             speed: playbackSpeedRef.current,
             useLocal: true
           })
@@ -683,16 +697,16 @@ function App() {
     let cleanupStart: (() => void) | undefined
     let cleanupStop: (() => void) | undefined
     
-    if (window.outloud?.dictation?.onHoldStart) {
-      cleanupStart = window.outloud.dictation.onHoldStart(() => {
+    if (window.rift?.dictation?.onHoldStart) {
+      cleanupStart = window.rift.dictation.onHoldStart(() => {
         if (dictationMode === 'hold' && modelReadyRef.current && !isRecordingRef.current) {
           handleRecordToggleRef.current?.()
         }
       })
     }
     
-    if (window.outloud?.dictation?.onHoldStop) {
-      cleanupStop = window.outloud.dictation.onHoldStop(() => {
+    if (window.rift?.dictation?.onHoldStop) {
+      cleanupStop = window.rift.dictation.onHoldStop(() => {
         if (dictationMode === 'hold' && isRecordingRef.current) {
           handleRecordToggleRef.current?.()
         }
@@ -746,7 +760,7 @@ function App() {
         }
         
         // Stop BE-driven silence monitoring
-        window.outloud?.llm?.stopSilenceMonitoring?.()
+        window.rift?.llm?.stopSilenceMonitoring?.()
         
         if (showLivePreview && audioRecorder.isStreamingRecording) {
           const finalBuffer = await audioRecorder.stopStreamingRecording()
@@ -756,11 +770,11 @@ function App() {
             const arrayBuffer = finalBuffer.buffer.slice(
               finalBuffer.byteOffset,
               finalBuffer.byteOffset + finalBuffer.byteLength
-            )
-            await window.outloud?.stt?.streamChunk?.(arrayBuffer)
+            ) as ArrayBuffer
+            await window.rift?.stt?.streamChunk?.(arrayBuffer)
           }
           
-          const streamEnd = await window.outloud?.stt?.streamEnd?.()
+          const streamEnd = await window.rift?.stt?.streamEnd?.()
           
           
           if (streamEnd?.success && streamEnd.transcription) {
@@ -770,7 +784,7 @@ function App() {
         } else {
           const audioBlob = await audioRecorder.stopRecording()
           const arrayBuffer = await audioBlob.arrayBuffer()
-          const result = await window.outloud.stt.transcribe(arrayBuffer)
+          const result = await window.rift.stt.transcribe(arrayBuffer)
           
           if (result.success && result.transcription) {
             transcription = result.transcription
@@ -783,7 +797,7 @@ function App() {
       } finally {
         await audioRecorder.cancel().catch(() => {})
         setIsVisible(true)
-        await window.outloud?.window?.show?.().catch(() => {})
+        await window.rift?.window?.show?.().catch(() => {})
         updateAudioLevel(0)
       }
       
@@ -820,7 +834,7 @@ function App() {
             let finalText = transcription
             
             // Try LLM polish if enabled
-            const settings = await window.outloud?.settings?.getAll?.()
+            const settings = await window.rift?.settings?.getAll?.()
             const llmEnabled = settings?.llmEnabled ?? true
             const polishMode = settings?.llmPolishMode ?? 'clean'
             
@@ -850,10 +864,10 @@ function App() {
               }
             }
             
-            if (llmEnabled && window.outloud?.llm?.polishText && textToPolish.length > 0) {
+            if (llmEnabled && window.rift?.llm?.polishText && textToPolish.length > 0) {
               try {
                 console.log('[Live Paste] Using LLM for final polish (mode:', polishMode, ')')
-                const polishResult = await window.outloud.llm.polishText(
+                const polishResult = await window.rift.llm.polishText(
                   polishedPrefix ? textToPolish : pastedText,  // Only polish delta if we have prefix
                   polishedPrefix ? textToPolish : transcription,
                   polishMode
@@ -897,7 +911,7 @@ function App() {
               console.log(`[Live Paste] Paste count for undo: ${pasteCountRef.current}`)
               
               // Record for test capture (if enabled)
-              window.outloud?.testCapture?.recordPaste?.({
+              window.rift?.testCapture?.recordPaste?.({
                 type: 'final-polish',
                 text: finalText,
                 delta: finalText,
@@ -907,7 +921,7 @@ function App() {
               })
               
               // Use undo-and-replace: more reliable than character selection
-              const correctionResult = await window.outloud?.text?.undoAndReplace?.({
+              const correctionResult = await window.rift?.text?.undoAndReplace?.({
                 undoCount: pasteCountRef.current,
                 correctText: finalText
               })
@@ -916,25 +930,25 @@ function App() {
               if (!correctionResult?.success) {
                 console.error('[Live Paste] Undo & Replace failed, falling back to correctLivePaste')
                 // Fallback to character-based selection
-                const fallbackResult = await window.outloud?.text?.correctLivePaste?.({
+                const fallbackResult = await window.rift?.text?.correctLivePaste?.({
                   charsToReplace: pastedText.length,
                   correctText: finalText
                 })
                 if (!fallbackResult?.success) {
                   console.error('[Live Paste] All correction methods failed, falling back to inject')
-                  await window.outloud.text.inject(finalText, { autoSend: false })
+                  await window.rift.text.inject(finalText, { autoSend: false })
                 }
               }
             }
           } else {
             // No live paste happened, inject normally
-            await window.outloud.text.inject(transcription, { autoSend: false })
+            await window.rift.text.inject(transcription, { autoSend: false })
           }
           
           // Handle auto-send if enabled
           if (autoSendAfterDictation) {
             await new Promise(resolve => setTimeout(resolve, 400))
-            await window.outloud.text.inject('', { autoSend: true })
+            await window.rift.text.inject('', { autoSend: true })
           }
         } catch (error) {
           console.error('Text injection error:', error)
@@ -944,7 +958,7 @@ function App() {
         setOrbState('idle')
         setIsVisible(false)
         await new Promise(resolve => setTimeout(resolve, 150))
-        await window.outloud?.window?.hide?.().catch(() => {})
+        await window.rift?.window?.hide?.().catch(() => {})
         
         pastedTextRef.current = ''
         lastPastedLengthRef.current = 0
@@ -967,7 +981,7 @@ function App() {
         // Hide the orb even when transcription failed/empty
         setIsVisible(false)
         await new Promise(resolve => setTimeout(resolve, 150))
-        await window.outloud?.window?.hide?.().catch(() => {})
+        await window.rift?.window?.hide?.().catch(() => {})
       }
     } else {
       // Start recording
@@ -982,11 +996,11 @@ function App() {
         }
         
         if (showLivePreview) {
-          const startResult = await window.outloud?.stt?.streamStart?.()
+          const startResult = await window.rift?.stt?.streamStart?.()
           if (!startResult?.success) {
             if (livePasteMode) {
               setIsVisible(true)
-              await window.outloud?.window?.show?.()
+              await window.rift?.window?.show?.()
             }
             audioCues.playError()
             return
@@ -1007,7 +1021,7 @@ function App() {
           silencePolishedTextRef.current = ''
           
           // Start BE-driven silence monitoring (handles all silence detection)
-          window.outloud?.llm?.startSilenceMonitoring?.()
+          window.rift?.llm?.startSilenceMonitoring?.()
           
           // Reset Apple-style stable prefix state
           wordStabilityRef.current.clear()
@@ -1023,7 +1037,7 @@ function App() {
           // even though real transcription takes ~2 seconds to appear.
           // The placeholder will be replaced by real text when first transcription arrives.
           if (livePasteMode) {
-            window.outloud?.text?.livePaste?.({
+            window.rift?.text?.livePaste?.({
               text: '...',
               previousLength: 0
             }).then((result: any) => {
@@ -1566,7 +1580,7 @@ function App() {
             console.log(`[Stable Prefix V2] No action: anchorFound=${anchorFound}, newWords=${newWords.length}, lockedWords=${lockedWords.length}`)
           }
           
-          const partialCleanup = window.outloud?.stt?.onPartialResult?.((data) => {
+          const partialCleanup = window.rift?.stt?.onPartialResult?.((data) => {
             setPartialText(data.text)
             
             if (livePasteMode && data.text) {
@@ -1802,7 +1816,7 @@ function App() {
               // Notify BE of speech activity - this resets the BE silence timer
               // and allows Silence Polish to retrigger after next silence period
               if (hasTranscriptionActivity) {
-                window.outloud?.llm?.notifySpeechDetected?.()
+                window.rift?.llm?.notifySpeechDetected?.()
               }
               
               
@@ -1889,7 +1903,7 @@ function App() {
                 // Use LLM to extract only truly new words from tail extension
                 const pastedEndForTail = currentPastedText.slice(-100) // Last ~100 chars for context
                 
-                window.outloud?.llm?.extractNewWords?.(pastedEndForTail, newTailWords).then((result) => {
+                window.rift?.llm?.extractNewWords?.(pastedEndForTail, newTailWords).then((result) => {
                   if (result?.success && result.newWords && result.newWords.trim() && result.newWords.toUpperCase() !== 'EMPTY') {
                     const newWordsOnly = result.newWords.trim()
                     console.log(`[Live Paste] LLM extracted new words (tail extension): "${newWordsOnly}"`)
@@ -2045,7 +2059,7 @@ function App() {
                   // Use LLM to extract only truly new words (handles partial overlaps intelligently)
                   const pastedEnd = currentPastedText.slice(-100) // Last ~100 chars for context
                   
-                  window.outloud?.llm?.extractNewWords?.(pastedEnd, tailWords).then((result) => {
+                  window.rift?.llm?.extractNewWords?.(pastedEnd, tailWords).then((result) => {
                     if (result?.success && result.newWords && result.newWords.trim() && result.newWords.toUpperCase() !== 'EMPTY') {
                       const newWordsOnly = result.newWords.trim()
                       console.log(`[Live Paste] LLM extracted new words: "${newWordsOnly}" (from tail: "${tailWords.slice(0, 40)}...")`)
@@ -2110,7 +2124,7 @@ function App() {
                     // Use LLM to extract only truly new words (handles partial overlaps intelligently)
                     const pastedEnd = currentPastedText.slice(-100) // Last ~100 chars for context
                     
-                    window.outloud?.llm?.extractNewWords?.(pastedEnd, tailWords).then((result) => {
+                    window.rift?.llm?.extractNewWords?.(pastedEnd, tailWords).then((result) => {
                       if (result?.success && result.newWords && result.newWords.trim() && result.newWords.toUpperCase() !== 'EMPTY') {
                         const newWordsOnly = result.newWords.trim()
                         console.log(`[Live Paste] LLM extracted new words (single-word anchor): "${newWordsOnly}"`)
@@ -2155,7 +2169,7 @@ function App() {
                     console.log(`[Live Paste] Complete divergence, trying LLM merge`)
                     
                     // Call LLM to extract new words (async, non-blocking for UI)
-                    window.outloud?.llm?.mergeText?.(currentPastedText, newText).then((result) => {
+                    window.rift?.llm?.mergeText?.(currentPastedText, newText).then((result) => {
                       if (result?.success && result.newWords && result.newWords.trim() && result.newWords.toUpperCase() !== 'EMPTY') {
                         const newWordsText = result.newWords.trim()
                         console.log(`[Live Paste] LLM merge found new words: "${newWordsText}"`)
@@ -2252,7 +2266,7 @@ function App() {
                     
                     // Silent correction via AppleScript
                     // Note: This is best-effort. If it fails, final reconciliation will fix it.
-                    window.outloud?.text?.correctSentence?.({
+                    window.rift?.text?.correctSentence?.({
                       sentenceIndex: i,
                       oldText: pastedSentence,
                       newText: newSentence
@@ -2283,8 +2297,8 @@ function App() {
               const arrayBuffer = pcmData.buffer.slice(
                 pcmData.byteOffset,
                 pcmData.byteOffset + pcmData.byteLength
-              )
-              await window.outloud?.stt?.streamChunk?.(arrayBuffer)
+              ) as ArrayBuffer
+              await window.rift?.stt?.streamChunk?.(arrayBuffer)
             },
             (levels) => {
               const avg = levels.reduce((a, b) => a + b, 0) / levels.length
@@ -2344,7 +2358,7 @@ function App() {
         }
         
         setIsVisible(true)
-        await window.outloud?.window?.show?.()
+        await window.rift?.window?.show?.()
         await audioRecorder.cancel().catch(() => {})
       }
     }
@@ -2408,6 +2422,26 @@ function App() {
         onLongPress={handleLongPress}
         className="orb-canvas"
       />
+      
+      {/* Status text for slow TTS models */}
+      {orbState === 'processing' && ttsModel !== 'kokoro' && (
+        <div style={{
+          position: 'absolute',
+          bottom: '20px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          color: 'rgba(255, 255, 255, 0.7)',
+          fontSize: '12px',
+          fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif',
+          fontWeight: 500,
+          letterSpacing: '0.5px',
+          textShadow: '0 1px 3px rgba(0,0,0,0.5)',
+          pointerEvents: 'none',
+          WebkitAppRegion: 'no-drag',
+        } as React.CSSProperties}>
+          Generating...
+        </div>
+      )}
       
     </div>
   )

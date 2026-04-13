@@ -25,7 +25,7 @@ const STT_SERVER_PATH = path.join(__dirname, '..', 'python', 'stt_server.py');
 const LLM_SERVER_PATH = path.join(__dirname, '..', 'python', 'llm_server.py');
 
 // Temp directory for audio files
-const TEMP_DIR = path.join(os.tmpdir(), 'outloud-e2e-test');
+const TEMP_DIR = path.join(os.tmpdir(), 'rift-e2e-test');
 
 // Test scenarios
 interface E2ETestScenario {

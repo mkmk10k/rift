@@ -612,7 +612,7 @@ export const BlackHoleOrb = memo(function BlackHoleOrb({
     }
     
     if (isDraggingRef.current) {
-      window.outloud?.window?.dragMove?.(Math.round(deltaX), Math.round(deltaY))
+      window.rift?.window?.dragMove?.(Math.round(deltaX), Math.round(deltaY))
       dragStartRef.current = { x: e.screenX, y: e.screenY }
     }
   }, [])
@@ -623,9 +623,6 @@ export const BlackHoleOrb = memo(function BlackHoleOrb({
       clearTimeout(longPressTimerRef.current)
       longPressTimerRef.current = null
     }
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/2b23957f-9b12-46c7-8588-a208ce0ca914',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BlackHoleOrb.tsx:pointerUp',message:'Pointer up detected',data:{isPressed:isPressedRef.current,hasDragged:hasDraggedRef.current,willCallOnTap:isPressedRef.current && !hasDraggedRef.current && !!onTap},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'TAP'})}).catch(()=>{});
-    // #endregion
     if (isPressedRef.current && !hasDraggedRef.current && onTap) onTap()
     isPressedRef.current = false
     isDraggingRef.current = false

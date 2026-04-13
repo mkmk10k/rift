@@ -1,0 +1,26 @@
+---
+description: MANDATORY first action at every session start
+alwaysApply: true
+---
+
+# Session Start - READ LEARNINGS FIRST
+
+**BEFORE doing ANY work on Rift, you MUST:**
+
+1. Read `.cursor/rules/project-structure.mdc` — repo layout, remotes, critical rules
+2. Read `.cursor/rules/agent-autonomy.mdc` — learnings and known bugs
+3. Pay special attention to "Learnings from" sections at the end of agent-autonomy.mdc
+4. Note which bugs have already been fixed so you don't re-discover them
+
+**Key learnings to remember:**
+- Two remotes: `origin` = private `mkmk10k/rift-dev`, `public` = open-source `mkmk10k/rift`
+- NEVER push directly to `public` remote — use `bun run publish-public`
+- TTS/STT must use bundled Python, not system Python
+- `prompts.json` must NOT be gitignored (it is needed at runtime)
+- Use `pip show` not `import` for diagnostics (Metal GPU crash)
+- Version comparison needs hash check for same-day releases
+- Website lives at `website/` inside this repo, not in a separate folder
+
+**At session END, update `agent-autonomy.mdc` with new learnings.**
+
+If you skip reading learnings, you WILL waste time re-fixing known bugs.

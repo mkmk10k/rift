@@ -7,7 +7,7 @@ The new Electron app is ready to run! Here's how to test it:
 ### 1. Start the App
 
 ```bash
-cd /Users/mikkokiiskila/Code/playground/outloud-electron
+cd /Users/mikkokiiskila/Code/playground/rift-electron
 bun run dev
 ```
 
@@ -24,7 +24,7 @@ A beautiful, floating widget with **native macOS glass effect** that:
 
 #### Test TTS (Play Button ▶)
 1. Click the play button (▶)
-2. Should synthesize "Hello from Outloud!"
+2. Should synthesize "Hello from Rift!"
 3. Plays audio if `mlx-audio` is installed
 
 #### Check Models (Settings ⚙)
@@ -42,7 +42,7 @@ A beautiful, floating widget with **native macOS glass effect** that:
 |---------|-------------|----------------|
 | **Glass Effect** | CSS hack (broken) | **Native vibrancy** |
 | **Dragging** | Required `data-tauri-drag-region` | `-webkit-app-region: drag` |
-| **IPC** | `invoke('command', args)` | `window.outloud.api()` |
+| **IPC** | `invoke('command', args)` | `window.rift.api()` |
 | **Compile Time** | ~6 seconds | **~0.5 seconds** |
 
 ### 5. Python Setup (If Testing TTS)

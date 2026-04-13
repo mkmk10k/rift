@@ -1,0 +1,11 @@
+{
+  "name": "rift-diagnostics",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-01",
+  "kv_namespaces": [
+    {
+      "binding": "DIAGNOSTICS_KV",
+      "id": "783b7be476fe45f098bca94a82d8d673"
+    }
+  ]
+}

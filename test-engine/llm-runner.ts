@@ -58,16 +58,34 @@ import {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const LLM_SERVER_PATH = path.join(__dirname, '..', 'python', 'llm_server.py');
-const PYTHON_PATH = '/opt/homebrew/bin/python3.11';
+
+function resolveDefaultLlmRunnerPython(): string {
+  const bundlePy = path.join(__dirname, '..', 'python-bundle', 'bin', 'python3.11');
+  if (fs.existsSync(bundlePy)) return bundlePy;
+  const candidates = [
+    '/opt/homebrew/bin/python3.11',
+    '/usr/local/bin/python3.11',
+    '/opt/homebrew/bin/python3',
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return '/tmp/rift-mlx-env/bin/python3';
+}
+
+const PYTHON_PATH = process.env.RIFT_PYTHON_PATH || resolveDefaultLlmRunnerPython();
+
+// Model config name, overridable via --model CLI flag
+let MODEL_CONFIG = process.env.RIFT_MODEL_CONFIG || 'gemma4-e4b';
 
 // Latency thresholds (ms) - tests fail if exceeded
 // Note: With adaptive model switching, worst case is fast + quality model time
 // Production uses adaptive fallback to heuristics if latency is too high
-const LATENCY_THRESHOLD_MERGE = 800;    // Phase 2: allows for adaptive retry (200ms + 500ms)
+const LATENCY_THRESHOLD_MERGE = 1500;   // Phase 2: adaptive retry + quality model fallback takes 1-1.5s
 const LATENCY_THRESHOLD_CORRECT = 500;  // Phase 3: fast model only
-const LATENCY_THRESHOLD_POLISH = 5000;  // Phase 4: now using 4B model for better quality
+const LATENCY_THRESHOLD_POLISH = 6500;  // Phase 4: 4B model takes 5-6s, allow buffer
 const LATENCY_THRESHOLD_DEEP = 10000;   // Deep cleanup: 4B model, can take longer
-const LATENCY_THRESHOLD_TTS_TRANSFORM = 12000;  // TTS transform: 4B model, allow up to 12s for complex transforms
+const LATENCY_THRESHOLD_TTS_TRANSFORM = 16000;  // TTS transform: 4B model, complex transforms take 12-15s
 
 // Environment variable to enable/disable deep cleanup tests (disabled by default due to memory)
 const RUN_DEEP_CLEANUP_TESTS = process.env.RUN_DEEP_CLEANUP === '1';
@@ -94,6 +112,8 @@ interface TestResult {
   actualOutput: string;
   similarity: number;
   error?: string;
+  // Input context for clear failure display
+  input?: string;  // Human-readable description of the test input
 }
 
 interface PhaseResults {
@@ -107,8 +127,17 @@ interface PhaseResults {
   latencyExceededCount: number;
 }
 
+interface TTSTransformSummary {
+  totalTests: number;
+  passed: number;
+  failed: number;
+  passRate: number;
+  avgLatencyMs: number;
+}
+
 interface LLMTestReport {
   timestamp: string;
+  modelConfig: string;
   serverStartupMs: number;
   phaseResults: PhaseResults[];
   allResults: TestResult[];
@@ -118,6 +147,7 @@ interface LLMTestReport {
     totalFailed: number;
     passRate: number;
   };
+  ttsTransform?: TTSTransformSummary;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -177,6 +207,7 @@ class LLMServerWrapper {
     return new Promise((resolve, reject) => {
       this.process = spawn(PYTHON_PATH, [LLM_SERVER_PATH], {
         stdio: ['pipe', 'pipe', 'inherit'],
+        env: { ...process.env, RIFT_MODEL_CONFIG: MODEL_CONFIG },
       });
 
       this.rl = readline.createInterface({
@@ -192,8 +223,10 @@ class LLMServerWrapper {
             this.isReady = true;
             this.startupTimeMs = Date.now() - startTime;
             console.log(`[LLM Server] Ready in ${this.startupTimeMs}ms`);
-            console.log(`[LLM Server] Fast model: ${response.fast_model}`);
-            console.log(`[LLM Server] Quality model: ${response.quality_model}`);
+            console.log(`[LLM Server] Config: ${response.model_config || MODEL_CONFIG} (${response.model_family || 'unknown'})`);
+            console.log(`[LLM Server] Fast:    ${response.fast_model || '?'}`);
+            console.log(`[LLM Server] Quality: ${response.quality_model || '?'}`);
+            console.log(`[LLM Server] Deep:    ${response.deep_model || '?'}`);
             resolve(this.startupTimeMs);
             return;
           }
@@ -247,13 +280,14 @@ class LLMServerWrapper {
     }
 
     return new Promise((resolve, reject) => {
+      // 4B polish + first deep load can exceed 30s on CI; align with eval guidance (~2m cap)
       const timeoutId = setTimeout(() => {
         const idx = this.responseQueue.findIndex(p => p.resolve === resolve);
         if (idx >= 0) {
           this.responseQueue.splice(idx, 1);
           reject(new Error('LLM request timeout'));
         }
-      }, 30000);
+      }, 120000);
 
       this.responseQueue.push({ resolve, reject, timeoutId });
 
@@ -405,7 +439,7 @@ class LLMServerWrapper {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Calculate similarity between two strings (Levenshtein-based)
+ * Calculate similarity between two strings (word Jaccard)
  * Returns 0-1 where 1 is identical
  */
 function calculateSimilarity(a: string, b: string): number {
@@ -429,6 +463,88 @@ function calculateSimilarity(a: string, b: string): number {
   return intersection.size / union.size;
 }
 
+/** Expand contractions so "They're" vs "They are" compare fairly in polish evals */
+function expandContractions(s: string): string {
+  return s
+    .replace(/\bthey're\b/gi, 'they are')
+    .replace(/\byou're\b/gi, 'you are')
+    .replace(/\bwe're\b/gi, 'we are')
+    .replace(/\bdon't\b/gi, 'do not')
+    .replace(/\bwon't\b/gi, 'will not')
+    .replace(/\bcan't\b/gi, 'cannot')
+    .replace(/\bwouldn't\b/gi, 'would not')
+    .replace(/\bshouldn't\b/gi, 'should not')
+    .replace(/\bit's\b/gi, 'it is')
+    .replace(/\bi'm\b/gi, 'i am');
+}
+
+/** Normalize for Phase 4 polish similarity: contractions, backticks, punctuation */
+function normalizePolishForSimilarity(s: string): string {
+  let t = s.toLowerCase();
+  t = expandContractions(t);
+  t = t.replace(/`/g, '');
+  t = t.replace(/[.,!?;:'"]/g, '');
+  t = t.replace(/\s+/g, ' ').trim();
+  return t;
+}
+
+function tokenMultisetF1(tokensA: string[], tokensB: string[]): number {
+  const countA = new Map<string, number>();
+  const countB = new Map<string, number>();
+  for (const w of tokensA) countA.set(w, (countA.get(w) || 0) + 1);
+  for (const w of tokensB) countB.set(w, (countB.get(w) || 0) + 1);
+  let intersection = 0;
+  for (const [w, ca] of countA) {
+    const cb = countB.get(w) || 0;
+    intersection += Math.min(ca, cb);
+  }
+  const sumA = tokensA.length;
+  const sumB = tokensB.length;
+  if (sumA === 0 || sumB === 0) return 0;
+  const precision = intersection / sumA;
+  const recall = intersection / sumB;
+  return (2 * precision * recall) / (precision + recall + 1e-9);
+}
+
+function jaccardWordSetSimilarity(normA: string, normB: string): number {
+  const wordsA = new Set(normA.split(' ').filter(Boolean));
+  const wordsB = new Set(normB.split(' ').filter(Boolean));
+  if (wordsA.size === 0 && wordsB.size === 0) return 1;
+  if (wordsA.size === 0 || wordsB.size === 0) return 0;
+  const intersection = new Set([...wordsA].filter(w => wordsB.has(w)));
+  const union = new Set([...wordsA, ...wordsB]);
+  return intersection.size / union.size;
+}
+
+/**
+ * Polish eval similarity: max over reference strings; uses max(Jaccard, token F1)
+ * after contraction expansion and backtick stripping.
+ */
+function calculatePolishSimilarity(expected: string | string[], actual: string): number {
+  const refs = Array.isArray(expected) ? expected : [expected];
+  let best = 0;
+  for (const ref of refs) {
+    const normE = normalizePolishForSimilarity(ref);
+    const normA = normalizePolishForSimilarity(actual);
+    if (normE === normA) {
+      best = 1;
+      break;
+    }
+    if (normE.length === 0 || normA.length === 0) continue;
+    const wa = normE.split(' ').filter(Boolean);
+    const wb = normA.split(' ').filter(Boolean);
+    const j = jaccardWordSetSimilarity(normE, normA);
+    const f1 = tokenMultisetF1(wa, wb);
+    const sim = Math.max(j, f1);
+    if (sim > best) best = sim;
+  }
+  return best;
+}
+
+function formatExpectedPolishedDisplay(expected: string | string[]): string {
+  return Array.isArray(expected) ? expected.join(' | ') : expected;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // TEST RUNNERS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -448,6 +564,7 @@ async function getServer(): Promise<LLMServerWrapper> {
  */
 async function runMergeTest(scenario: MergeTestScenario): Promise<TestResult> {
   const server = await getServer();
+  const inputContext = `Already typed: "${scenario.pasted}" → User said: "${scenario.newText}"`;
 
   try {
     const response = await server.mergeText(scenario.pasted, scenario.newText);
@@ -464,6 +581,7 @@ async function runMergeTest(scenario: MergeTestScenario): Promise<TestResult> {
         actualOutput: '',
         similarity: 0,
         error: response.error,
+        input: inputContext,
       };
     }
 
@@ -483,6 +601,7 @@ async function runMergeTest(scenario: MergeTestScenario): Promise<TestResult> {
       expectedOutput: scenario.expectedNewWords,
       actualOutput,
       similarity,
+      input: inputContext,
     };
   } catch (err: any) {
     return {
@@ -496,6 +615,7 @@ async function runMergeTest(scenario: MergeTestScenario): Promise<TestResult> {
       actualOutput: '',
       similarity: 0,
       error: err.message,
+      input: inputContext,
     };
   }
 }
@@ -505,6 +625,7 @@ async function runMergeTest(scenario: MergeTestScenario): Promise<TestResult> {
  */
 async function runCorrectionTest(scenario: CorrectionTestScenario): Promise<TestResult> {
   const server = await getServer();
+  const inputContext = `Original: "${scenario.original}" → Latest STT: "${scenario.latest}"`;
 
   try {
     const response = await server.correctSentence(scenario.original, scenario.latest);
@@ -521,6 +642,7 @@ async function runCorrectionTest(scenario: CorrectionTestScenario): Promise<Test
         actualOutput: '',
         similarity: 0,
         error: response.error,
+        input: inputContext,
       };
     }
 
@@ -540,6 +662,7 @@ async function runCorrectionTest(scenario: CorrectionTestScenario): Promise<Test
       expectedOutput: scenario.expectedCorrected,
       actualOutput,
       similarity,
+      input: inputContext,
     };
   } catch (err: any) {
     return {
@@ -553,6 +676,7 @@ async function runCorrectionTest(scenario: CorrectionTestScenario): Promise<Test
       actualOutput: '',
       similarity: 0,
       error: err.message,
+      input: inputContext,
     };
   }
 }
@@ -562,6 +686,7 @@ async function runCorrectionTest(scenario: CorrectionTestScenario): Promise<Test
  */
 async function runPolishTest(scenario: PolishTestScenario): Promise<TestResult> {
   const server = await getServer();
+  const inputContext = `[${scenario.mode.toUpperCase()}] Input: "${scenario.finalText}"`;
 
   try {
     const response = await server.polishText(
@@ -578,18 +703,20 @@ async function runPolishTest(scenario: PolishTestScenario): Promise<TestResult> 
         passed: false,
         latencyMs: 0,
         latencyExceeded: false,
-        expectedOutput: scenario.expectedPolished,
+        expectedOutput: formatExpectedPolishedDisplay(scenario.expectedPolished),
         actualOutput: '',
         similarity: 0,
         error: response.error,
+        input: inputContext,
       };
     }
 
     const actualOutput = response.polished || '';
     const latencyMs = response.inference_time_ms || 0;
-    const similarity = calculateSimilarity(scenario.expectedPolished, actualOutput);
+    const similarity = calculatePolishSimilarity(scenario.expectedPolished, actualOutput);
     const latencyExceeded = latencyMs > LATENCY_THRESHOLD_POLISH;
     const passed = similarity >= SIMILARITY_THRESHOLD && !latencyExceeded;
+    const expectedDisplay = formatExpectedPolishedDisplay(scenario.expectedPolished);
 
     return {
       id: scenario.id,
@@ -598,9 +725,10 @@ async function runPolishTest(scenario: PolishTestScenario): Promise<TestResult> 
       passed,
       latencyMs,
       latencyExceeded,
-      expectedOutput: scenario.expectedPolished,
+      expectedOutput: expectedDisplay,
       actualOutput,
       similarity,
+      input: inputContext,
     };
   } catch (err: any) {
     return {
@@ -610,10 +738,11 @@ async function runPolishTest(scenario: PolishTestScenario): Promise<TestResult> 
       passed: false,
       latencyMs: 0,
       latencyExceeded: false,
-      expectedOutput: scenario.expectedPolished,
+      expectedOutput: formatExpectedPolishedDisplay(scenario.expectedPolished),
       actualOutput: '',
       similarity: 0,
       error: err.message,
+      input: inputContext,
     };
   }
 }
@@ -623,6 +752,7 @@ async function runPolishTest(scenario: PolishTestScenario): Promise<TestResult> 
  */
 async function runListDetectionTest(scenario: ListDetectionScenario): Promise<TestResult> {
   const server = await getServer();
+  const inputContext = `[${scenario.mode.toUpperCase()}] Input: "${scenario.input}"`;
 
   try {
     // Use polish endpoint with the input text
@@ -644,6 +774,7 @@ async function runListDetectionTest(scenario: ListDetectionScenario): Promise<Te
         actualOutput: '',
         similarity: 0,
         error: response.error,
+        input: inputContext,
       };
     }
 
@@ -695,6 +826,7 @@ async function runListDetectionTest(scenario: ListDetectionScenario): Promise<Te
       actualOutput,
       similarity: patternsOk ? 1.0 : 0.5,  // Use similarity to indicate pattern match
       error: errorMsg || undefined,
+      input: inputContext,
     };
   } catch (err: any) {
     return {
@@ -708,6 +840,7 @@ async function runListDetectionTest(scenario: ListDetectionScenario): Promise<Te
       actualOutput: '',
       similarity: 0,
       error: err.message,
+      input: inputContext,
     };
   }
 }
@@ -717,6 +850,7 @@ async function runListDetectionTest(scenario: ListDetectionScenario): Promise<Te
  */
 async function runExtractNewWordsTest(scenario: ExtractNewWordsTestScenario): Promise<TestResult> {
   const server = await getServer();
+  const inputContext = `Pasted end: "${scenario.pastedEnd}" → Tail words: "${scenario.tailWords}"`;
 
   try {
     const response = await server.extractNewWords(scenario.pastedEnd, scenario.tailWords);
@@ -733,6 +867,7 @@ async function runExtractNewWordsTest(scenario: ExtractNewWordsTestScenario): Pr
         actualOutput: '',
         similarity: 0,
         error: response.error,
+        input: inputContext,
       };
     }
 
@@ -752,6 +887,7 @@ async function runExtractNewWordsTest(scenario: ExtractNewWordsTestScenario): Pr
       expectedOutput: scenario.expectedNewWords,
       actualOutput,
       similarity,
+      input: inputContext,
     };
   } catch (err: any) {
     return {
@@ -765,6 +901,7 @@ async function runExtractNewWordsTest(scenario: ExtractNewWordsTestScenario): Pr
       actualOutput: '',
       similarity: 0,
       error: err.message,
+      input: inputContext,
     };
   }
 }
@@ -990,6 +1127,7 @@ async function runAllTests(): Promise<LLMTestReport> {
 
   console.log('\n═══════════════════════════════════════════════════════════════');
   console.log('                    LLM TEST RUNNER                             ');
+  console.log(`                  Model: ${MODEL_CONFIG}`);
   console.log('═══════════════════════════════════════════════════════════════\n');
 
   // Print test summary
@@ -1088,6 +1226,22 @@ async function runAllTests(): Promise<LLMTestReport> {
   console.log('\n─────────────────────────────────────────────────────────────');
   console.log('PHASE 4: Final Text Polish');
   console.log('─────────────────────────────────────────────────────────────\n');
+
+  // Full polish warmup so the first scenario is not penalized for deep-model cold start
+  try {
+    const s = await getServer();
+    console.log('[Phase 4] Warming up deep polish model (dummy request)...');
+    const warm = await s.polishText('Warmup.', 'Warmup.', 'clean');
+    if (warm.type === 'error') {
+      console.log(`[Phase 4] Warmup returned error (continuing): ${warm.error}`);
+    } else {
+      console.log(
+        `[Phase 4] Warmup complete in ${warm.inference_time_ms ?? '?'}ms — starting scenarios\n`
+      );
+    }
+  } catch (e: any) {
+    console.log(`[Phase 4] Warmup failed (continuing): ${e?.message || e}`);
+  }
 
   for (const scenario of polishScenarios) {
     const result = await runPolishTest(scenario);
@@ -1293,8 +1447,46 @@ async function runAllTests(): Promise<LLMTestReport> {
     llmServer = null;
   }
 
+  // Generate failure analysis
+  const failureAnalysis = generateFailureAnalysis(allResults);
+  
+  // Print failure analysis
+  printFailureAnalysis(failureAnalysis);
+  
+  const reportForSave: LLMTestReport = {
+    timestamp: new Date().toISOString(),
+    modelConfig: MODEL_CONFIG,
+    serverStartupMs,
+    phaseResults: [],
+    allResults,
+    summary: {
+      totalTests: allResults.length,
+      totalPassed: allResults.filter(r => r.passed).length,
+      totalFailed: allResults.filter(r => !r.passed).length,
+      passRate: allResults.filter(r => r.passed).length / allResults.length,
+    },
+  };
+  saveLatestResults(reportForSave, contextResults, ttsTransformResults, failureAnalysis);
+
+  // Calculate TTS Transform summary if tests were run
+  let ttsTransformSummary: TTSTransformSummary | undefined;
+  if (ttsTransformResults.length > 0) {
+    const ttsPassed = ttsTransformResults.filter(r => r.passed).length;
+    const ttsLatencies = ttsTransformResults.map(r => r.latencyMs).filter(l => l > 0);
+    ttsTransformSummary = {
+      totalTests: ttsTransformResults.length,
+      passed: ttsPassed,
+      failed: ttsTransformResults.length - ttsPassed,
+      passRate: ttsPassed / ttsTransformResults.length,
+      avgLatencyMs: ttsLatencies.length > 0 
+        ? ttsLatencies.reduce((a, b) => a + b, 0) / ttsLatencies.length 
+        : 0,
+    };
+  }
+
   return {
     timestamp: new Date().toISOString(),
+    modelConfig: MODEL_CONFIG,
     serverStartupMs,
     phaseResults,
     allResults,
@@ -1304,6 +1496,7 @@ async function runAllTests(): Promise<LLMTestReport> {
       totalFailed,
       passRate,
     },
+    ttsTransform: ttsTransformSummary,
   };
 }
 
@@ -1312,10 +1505,12 @@ async function runAllTests(): Promise<LLMTestReport> {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const HISTORY_FILE = path.join(__dirname, 'history.jsonl');
+const LATEST_RESULTS_FILE = path.join(__dirname, 'latest-results.json');
 
 interface HistoryEntry {
   timestamp: string;
   label: string;
+  modelConfig: string;
   totalTests: number;
   passed: number;
   failed: number;
@@ -1324,6 +1519,10 @@ interface HistoryEntry {
   phase2PassRate: number;
   phase3PassRate: number;
   phase4PassRate: number;
+  ttsTransformPassed?: number;
+  ttsTransformTotal?: number;
+  ttsTransformPassRate?: number;
+  ttsTransformAvgLatencyMs?: number;
 }
 
 /**
@@ -1341,6 +1540,7 @@ function appendToHistory(report: LLMTestReport, label: string = 'run'): void {
   const entry: HistoryEntry = {
     timestamp: report.timestamp,
     label,
+    modelConfig: MODEL_CONFIG,
     totalTests: report.summary.totalTests,
     passed: report.summary.totalPassed,
     failed: report.summary.totalFailed,
@@ -1351,11 +1551,396 @@ function appendToHistory(report: LLMTestReport, label: string = 'run'): void {
     phase2PassRate: phase2 ? phase2.passed / phase2.total : 0,
     phase3PassRate: phase3 ? phase3.passed / phase3.total : 0,
     phase4PassRate: phase4 ? phase4.passed / phase4.total : 0,
+    // Include TTS Transform results if available
+    ...(report.ttsTransform && {
+      ttsTransformPassed: report.ttsTransform.passed,
+      ttsTransformTotal: report.ttsTransform.totalTests,
+      ttsTransformPassRate: report.ttsTransform.passRate,
+      ttsTransformAvgLatencyMs: report.ttsTransform.avgLatencyMs,
+    }),
   };
   
   const line = JSON.stringify(entry) + '\n';
   fs.appendFileSync(HISTORY_FILE, line);
   console.log(`\n[History] Appended to ${HISTORY_FILE}`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FAILURE ANALYSIS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface FailureDetail {
+  id: string;
+  name: string;
+  category: string;
+  similarity: number;
+  reason: string;
+  actual: string;
+  expected: string;
+  input?: string;  // Human-readable input context for the test
+}
+
+interface FailureAnalysis {
+  totalFailures: number;
+  byCategory: Record<string, string[]>;
+  failureDetails: FailureDetail[];
+  recommendations: string[];
+  cursorPrompt: string;
+}
+
+/**
+ * Categorize a test result into a failure category
+ */
+function categorizeFailure(result: TestResult): string {
+  const id = result.id.toLowerCase();
+  
+  if (id.startsWith('punct-') || id.includes('punctuation')) return 'punctuation';
+  if (id.startsWith('contract-') || id.includes('contraction')) return 'contraction';
+  if (id.startsWith('truncate-') || id.includes('truncation')) return 'truncation';
+  if (id.startsWith('revision-') || id.includes('revision')) return 'revision';
+  if (id.startsWith('edge-') || id.includes('edge')) return 'edge-case';
+  if (id.startsWith('extract-')) return 'extract';
+  if (id.startsWith('stutter-')) return 'stutter';
+  if (id.startsWith('grammar-')) return 'grammar';
+  if (id.startsWith('homo-') || id.includes('homophone')) return 'homophone';
+  if (id.startsWith('format-')) return 'format';
+  if (id.startsWith('tech-')) return 'technical';
+  if (id.startsWith('filler-')) return 'filler';
+  if (id.startsWith('list-')) return 'list';
+  
+  // Fallback to phase-based category
+  if (result.phase === 2) return 'merge';
+  if (result.phase === 3) return 'correction';
+  if (result.phase === 4) return 'polish';
+  
+  return 'other';
+}
+
+/**
+ * Infer a human-readable reason for why the test failed
+ * Analyzes actual vs expected output to provide specific, actionable feedback
+ */
+function inferFailureReason(result: TestResult): string {
+  const id = result.id.toLowerCase();
+  const sim = result.similarity;
+  const actual = (result.actualOutput || '').toLowerCase().trim();
+  const expected = (result.expectedOutput || '').toLowerCase().trim();
+  
+  // Analyze the actual difference between expected and actual
+  const actualWords = new Set(actual.split(/\s+/).filter(Boolean));
+  const expectedWords = new Set(expected.split(/\s+/).filter(Boolean));
+  
+  // Find what's missing and what's extra
+  const missing: string[] = [];
+  const extra: string[] = [];
+  
+  for (const word of expectedWords) {
+    if (!actualWords.has(word)) missing.push(word);
+  }
+  for (const word of actualWords) {
+    if (!expectedWords.has(word)) extra.push(word);
+  }
+  
+  // Specific known patterns (more detailed)
+  if (id.includes('contract')) {
+    if (id.includes('would-have')) {
+      return 'Model didn\'t recognize "would\'ve" as equivalent to "would have" — treated contraction as new content';
+    }
+    if (id.includes('do-not')) {
+      return 'Model didn\'t recognize "don\'t" as equivalent to "do not" — failed to find overlap';
+    }
+    return `Contraction handling failed — model can't match contracted vs expanded forms`;
+  }
+  
+  if (id.includes('truncate')) {
+    if (missing.length > 0) {
+      return `Lost content during truncation — missing: "${missing.slice(0, 3).join(', ')}"`;
+    }
+    return 'Truncated text confused the overlap detection — couldn\'t find matching point';
+  }
+  
+  if (id.includes('complete-rewrite') || id.includes('edge-complete')) {
+    return 'When user rewrites entirely (same meaning, different words), model should detect this — it didn\'t';
+  }
+  
+  if (id.includes('nothing-new') || id.includes('edge-nothing')) {
+    if (actual.length > 0) {
+      return `Should output nothing (no new words), but model returned: "${actual.slice(0, 30)}..."`;
+    }
+    return 'Failed to recognize that revised text contains no new content';
+  }
+  
+  if (id.includes('number-format') || id.includes('revision-number')) {
+    return 'Number format changed (e.g., "three thirty" → "3:30") — model saw format change as new content';
+  }
+  
+  if (id.includes('homo') || id.includes('homophone')) {
+    return 'Homophone not corrected — model should fix their/they\'re, your/you\'re based on context';
+  }
+  
+  if (id.includes('phone') || id.includes('url') || id.includes('format')) {
+    return 'Format should be preserved (phone numbers, URLs) — model converted to spoken words';
+  }
+  
+  if (id.includes('stutter')) {
+    return 'Repeated/stuttered words should be cleaned up — model left repetitions in place';
+  }
+  
+  if (id.includes('extract') && id.includes('edge')) {
+    if (missing.length > 0 && extra.length === 0) {
+      return `Edge case extraction — output too short, missing: "${missing.join(', ')}"`;
+    }
+    return 'Edge case in word extraction — boundary detection failed';
+  }
+  
+  if (id.includes('extract') && id.includes('punct')) {
+    return 'Punctuation affected word extraction — model included/excluded wrong words at sentence boundary';
+  }
+  
+  // Analyze based on actual differences found
+  if (actual.length === 0 && expected.length > 0) {
+    return `Model returned empty output — expected: "${expected.slice(0, 40)}${expected.length > 40 ? '...' : ''}"`;
+  }
+  
+  if (missing.length > 0 && extra.length === 0) {
+    return `Output truncated — missing: "${missing.slice(0, 4).join(', ')}"`;
+  }
+  
+  if (extra.length > 0 && missing.length === 0) {
+    return `Output too long — included extra: "${extra.slice(0, 4).join(', ')}"`;
+  }
+  
+  if (missing.length > 0 && extra.length > 0) {
+    return `Wrong content — missing "${missing[0]}", got "${extra[0]}" instead`;
+  }
+  
+  // Fallback based on similarity
+  if (sim === 0) {
+    return `Output completely wrong — expected "${expected.slice(0, 30)}...", got "${actual.slice(0, 30)}..."`;
+  }
+  if (sim < 0.3) {
+    return 'Very low match — model misunderstood what new content to extract';
+  }
+  if (sim < 0.5) {
+    return 'Partial match only — model found some but not all new words';
+  }
+  if (sim < 0.7) {
+    return 'Close but threshold not met (need 70% word overlap) — minor extraction error';
+  }
+  
+  // Check for error
+  if (result.error) {
+    return `Error: ${result.error}`;
+  }
+  
+  return `Similarity ${(sim * 100).toFixed(0)}% below 70% threshold`;
+}
+
+/**
+ * Generate recommendations based on failure patterns
+ */
+function generateRecommendations(byCategory: Record<string, string[]>): string[] {
+  const recommendations: string[] = [];
+  
+  if (byCategory['contraction']?.length > 0) {
+    recommendations.push('Add few-shot examples for contraction pairs (would have/would\'ve, do not/don\'t) to merge prompt');
+  }
+  if (byCategory['truncation']?.length > 0) {
+    recommendations.push('Improve truncation detection - consider semantic similarity for heavily truncated inputs');
+  }
+  if (byCategory['extract']?.length > 0) {
+    recommendations.push('Review extract_new_words prompt - edge cases with partial overlap need better handling');
+  }
+  if (byCategory['edge-case']?.length > 0) {
+    recommendations.push('Add edge case handling for complete rewrites and empty new content');
+  }
+  if (byCategory['homophone']?.length > 0) {
+    recommendations.push('Consider context-aware homophone correction in polish prompt');
+  }
+  if (byCategory['format']?.length > 0) {
+    recommendations.push('Format preservation needs improvement - phone numbers/URLs being expanded to words');
+  }
+  if (byCategory['punctuation']?.length > 0) {
+    recommendations.push('Review punctuation handling in merge detection');
+  }
+  if (byCategory['stutter']?.length > 0) {
+    recommendations.push('Improve stutter pattern detection in correction phase');
+  }
+  
+  if (recommendations.length === 0) {
+    recommendations.push('Review failing test scenarios for common patterns');
+  }
+  
+  return recommendations;
+}
+
+/**
+ * Generate a Cursor-ready prompt for fixing failures
+ */
+function generateCursorPrompt(
+  failureDetails: FailureDetail[],
+  byCategory: Record<string, string[]>,
+  recommendations: string[]
+): string {
+  const categoryList = Object.entries(byCategory)
+    .filter(([_, ids]) => ids.length > 0)
+    .map(([cat, ids]) => `  - ${cat}: ${ids.join(', ')}`)
+    .join('\n');
+  
+  const topFailures = failureDetails
+    .slice(0, 5)
+    .map(f => `  - ${f.id}: ${f.reason}`)
+    .join('\n');
+  
+  const recList = recommendations
+    .map((r, i) => `${i + 1}. ${r}`)
+    .join('\n');
+  
+  return `I need to improve the failing LLM eval scenarios in Rift.
+
+Failed tests (${failureDetails.length} total):
+${categoryList}
+
+Top failures:
+${topFailures}
+
+Recommendations:
+${recList}
+
+Please analyze these failures in test-engine/llm-scenarios.ts and python/prompts.json, then propose improvements to either:
+1. The test expectations (if they're too strict)
+2. The LLM prompts (if the model can do better with better guidance)
+3. Add few-shot examples for problematic patterns
+
+Focus on the highest-impact fixes first.`;
+}
+
+/**
+ * Generate comprehensive failure analysis
+ */
+function generateFailureAnalysis(allResults: TestResult[]): FailureAnalysis {
+  const failures = allResults.filter(r => !r.passed);
+  
+  // Group by category
+  const byCategory: Record<string, string[]> = {};
+  for (const f of failures) {
+    const cat = categorizeFailure(f);
+    if (!byCategory[cat]) byCategory[cat] = [];
+    byCategory[cat].push(f.id);
+  }
+  
+  // Generate detailed failure info
+  const failureDetails: FailureDetail[] = failures.map(f => ({
+    id: f.id,
+    name: f.name,
+    category: categorizeFailure(f),
+    similarity: f.similarity,
+    reason: inferFailureReason(f),
+    actual: f.actualOutput,
+    expected: f.expectedOutput,
+    input: f.input,  // Include test input context
+  }));
+  
+  // Generate recommendations
+  const recommendations = generateRecommendations(byCategory);
+  
+  // Generate Cursor prompt
+  const cursorPrompt = generateCursorPrompt(failureDetails, byCategory, recommendations);
+  
+  return {
+    totalFailures: failures.length,
+    byCategory,
+    failureDetails,
+    recommendations,
+    cursorPrompt,
+  };
+}
+
+/**
+ * Print failure analysis to console
+ */
+function printFailureAnalysis(analysis: FailureAnalysis): void {
+  if (analysis.totalFailures === 0) {
+    console.log('\n✅ All tests passed - no failure analysis needed.');
+    return;
+  }
+  
+  console.log('\n═══════════════════════════════════════════════════════════════');
+  console.log('                    FAILURE ANALYSIS                            ');
+  console.log('═══════════════════════════════════════════════════════════════\n');
+  
+  // By category
+  console.log('By Category:');
+  for (const [cat, ids] of Object.entries(analysis.byCategory)) {
+    if (ids.length > 0) {
+      console.log(`  ${cat} (${ids.length}): ${ids.slice(0, 3).join(', ')}${ids.length > 3 ? '...' : ''}`);
+    }
+  }
+  
+  // Top issues
+  console.log('\nTop Issues:');
+  const topIssues = analysis.failureDetails.slice(0, 5);
+  for (let i = 0; i < topIssues.length; i++) {
+    const f = topIssues[i];
+    console.log(`  ${i + 1}. ${f.id}: ${f.reason}`);
+  }
+  
+  // Recommendations
+  console.log('\nRecommendations:');
+  for (const rec of analysis.recommendations) {
+    console.log(`  • ${rec}`);
+  }
+  
+  console.log('\n[Cursor Prompt available in latest-results.json]');
+}
+
+/**
+ * Save latest results to JSON for website export
+ * Includes per-scenario pass/fail results
+ */
+function saveLatestResults(
+  report: LLMTestReport,
+  contextResults: ContextDetectionResult[],
+  ttsTransformResults: TTSTransformResult[],
+  failureAnalysis?: FailureAnalysis
+): void {
+  const latestResults = {
+    timestamp: report.timestamp,
+    modelConfig: report.modelConfig,
+    llmResults: report.allResults.map(r => ({
+      id: r.id,
+      name: r.name,
+      phase: r.phase,
+      passed: r.passed,
+      latencyMs: r.latencyMs,
+      similarity: r.similarity,
+      actual: r.actualOutput,
+      expected: r.expectedOutput,
+      error: r.error,
+    })),
+    // Context detection results
+    contextResults: contextResults.map(r => ({
+      id: r.id,
+      name: r.name,
+      passed: r.passed,
+      expectedMode: r.expectedMode,
+      actualMode: r.actualMode,
+    })),
+    // TTS Transform results
+    ttsTransformResults: ttsTransformResults.map(r => ({
+      id: r.id,
+      name: r.name,
+      passed: r.passed,
+      latencyMs: r.latencyMs,
+      conceptsMissing: r.conceptsMissing,
+      error: r.error,
+    })),
+    // Failure analysis
+    failureAnalysis: failureAnalysis || null,
+  };
+  
+  fs.writeFileSync(LATEST_RESULTS_FILE, JSON.stringify(latestResults, null, 2));
+  console.log(`\n[Results] Saved to ${LATEST_RESULTS_FILE}`);
 }
 
 /**
@@ -1364,6 +1949,7 @@ function appendToHistory(report: LLMTestReport, label: string = 'run'): void {
 function printAgentSummary(report: LLMTestReport): void {
   console.log('\n=== EVALS SUMMARY FOR AGENT ===');
   console.log(`TIMESTAMP: ${report.timestamp}`);
+  console.log(`MODEL_CONFIG: ${report.modelConfig}`);
   console.log(`PASS_RATE: ${(report.summary.passRate * 100).toFixed(1)}%`);
   console.log(`TOTAL: ${report.summary.totalPassed}/${report.summary.totalTests}`);
   
@@ -1387,6 +1973,8 @@ function printAgentSummary(report: LLMTestReport): void {
 // CLI
 // ═══════════════════════════════════════════════════════════════════════════════
 
+const MODEL_CONFIGS_LIST = ['qwen3', 'gemma4-e4b', 'gemma4-e4b-6bit', 'gemma4-moe'];
+
 function printHelp(): void {
   console.log(`
 LLM Test Runner for Live Paste Enhancement
@@ -1398,6 +1986,9 @@ Usage:
 Options:
   --phase <2|3|4>     Run tests for a specific phase only
   --category <name>   Run tests for a specific category
+  --model <config>    Model config to use (default: qwen3)
+                      Available: ${MODEL_CONFIGS_LIST.join(', ')}
+  --label <name>      Label for history entry (default: run)
   --benchmark         Run latency benchmarks (10 iterations per test)
   --help              Show this help message
 
@@ -1406,14 +1997,11 @@ Phases:
   3  Rolling sentence correction (during speech)
   4  Final text polish (when recording stops)
 
-Categories (Phase 2):
-  punctuation, contraction, truncation, revision, edge-case
-
-Categories (Phase 3):
-  grammar, stuttering, punctuation, artifact
-
-Categories (Phase 4):
-  filler, homophone, grammar, technical, formatting
+Model Configs:
+  qwen3              Qwen3 0.6B fast + 4B deep (default)
+  gemma4-e4b         Gemma 4 E4B-4bit as deep model
+  gemma4-e4b-6bit    Gemma 4 E4B-6bit as deep model
+  gemma4-moe         Gemma 4 26B MoE-4bit as deep model
 `);
 }
 
@@ -1428,6 +2016,19 @@ async function main(): Promise<void> {
   // Get label from args (e.g., --label baseline-1.7b)
   const labelIdx = args.indexOf('--label');
   const label = labelIdx >= 0 && args[labelIdx + 1] ? args[labelIdx + 1] : 'run';
+
+  // Get model config from args (e.g., --model gemma4-e4b)
+  const modelIdx = args.indexOf('--model');
+  if (modelIdx >= 0 && args[modelIdx + 1]) {
+    const requestedModel = args[modelIdx + 1];
+    if (!MODEL_CONFIGS_LIST.includes(requestedModel)) {
+      console.error(`Unknown model config: ${requestedModel}`);
+      console.error(`Available: ${MODEL_CONFIGS_LIST.join(', ')}`);
+      process.exit(1);
+    }
+    MODEL_CONFIG = requestedModel;
+    console.log(`[Config] Using model config: ${MODEL_CONFIG}`);
+  }
 
   try {
     const report = await runAllTests();

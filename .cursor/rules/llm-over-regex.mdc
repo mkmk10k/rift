@@ -1,0 +1,80 @@
+---
+description: Prefer LLM-based solutions over regex for text transformation
+globs: ["**/*.py", "**/*.ts"]
+alwaysApply: true
+---
+
+# LLM Over Regex Principle
+
+**Put intelligence in the LLM, not in regex/parsing logic.**
+
+## When to Use LLM Instead of Regex
+
+Use few-shot prompting for these transformations:
+
+1. **Filler word removal** - Context matters ("duh" vs "uh", "like" in comparison vs filler)
+2. **Duplicate detection** - Semantic similarity, not just exact match
+3. **List formatting** - Many spoken formats ("first", "number one", "firstly")
+4. **Grammar correction** - Requires understanding, not pattern matching
+5. **Content cleanup** - Removing redundant phrases, fixing flow
+
+## When Regex is OK
+
+Simple, deterministic operations:
+
+1. **Whitespace normalization** - `\s+` → single space
+2. **Prompt artifact removal** - `<|im_end|>`, `/no_think`
+3. **Token cleanup** - Stripping special tokens
+4. **Format standardization** - Trailing spaces, line endings
+
+## When to Use Audio-Level Filtering
+
+For speech/noise issues, address at the source:
+
+1. **Background noise** → Check RMS volume vs average speech level
+2. **Gibberish transcription** → Skip low-volume audio before STT
+3. **Address root cause (audio) not symptom (bad text)**
+
+## Anti-Pattern Examples
+
+```python
+# BAD: Brittle regex that fails on edge cases
+def remove_fillers(text):
+    # Misses "and uh", catches valid words
+    return re.sub(r'\b(um|uh|like)\b', '', text)
+
+# BAD: Trying to detect duplicates with regex
+def deduplicate(text):
+    # Fails on near-duplicates, semantic similarity
+    sentences = re.split(r'[.!?]', text)
+    ...
+```
+
+## Good Pattern Examples
+
+```python
+# GOOD: Few-shot prompting
+PROMPT = """
+<|im_start|>user
+And uh let me explain. Like um basically we need to do this.<|im_end|>
+<|im_start|>assistant
+Let me explain. We need to do this.<|im_end|>
+<|im_start|>user
+I went to store. I bought milk. I went to store. I bought milk. Done.<|im_end|>
+<|im_start|>assistant
+I went to the store. I bought milk. Done.<|im_end|>
+"""
+
+# GOOD: Audio-level filtering for noise
+def is_low_volume_noise(audio_chunk, avg_speech_rms):
+    rms = np.sqrt(np.mean(audio_chunk ** 2))
+    return rms < avg_speech_rms * 0.3  # Below 30% of normal speech
+```
+
+## Investment Payoff
+
+| Approach | Initial Cost | Maintenance | Edge Cases |
+|----------|-------------|-------------|------------|
+| Regex post-processing | Low | High (constant fixes) | Breaks often |
+| Few-shot prompting | Medium | Low (examples scale) | Handles gracefully |
+| Audio-level filtering | Medium | Low | Addresses root cause |

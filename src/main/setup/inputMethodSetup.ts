@@ -1,7 +1,7 @@
 /**
  * Input Method Setup Module
  * 
- * Handles installation and configuration of the OutloudInput input method
+ * Handles installation and configuration of the RiftInput input method
  * which enables live text injection into any macOS app.
  */
 
@@ -10,9 +10,9 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { execSync, spawn } from 'child_process';
 
-const INPUT_METHOD_NAME = 'OutloudInput.app';
-const INPUT_METHOD_BUNDLE_ID = 'sh.outloud.inputmethod';
-const INPUT_METHOD_SOURCE_ID = 'sh.outloud.inputmethod.outloud';
+const INPUT_METHOD_NAME = 'RiftInput.app';
+const INPUT_METHOD_BUNDLE_ID = 'dev.myrift.inputmethod';
+const INPUT_METHOD_SOURCE_ID = 'dev.myrift.inputmethod.rift';
 
 /**
  * Get the path where input methods should be installed

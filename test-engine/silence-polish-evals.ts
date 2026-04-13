@@ -30,7 +30,7 @@ const TEMP_DIR = path.join(os.tmpdir(), 'silence-polish-test');
 // SILENCE POLISH TEST SCENARIOS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-interface SilencePolishScenario {
+export interface SilencePolishScenario {
   id: string;
   name: string;
   category: 'numbered-list' | 'bullet-list' | 'mixed' | 'multi-pause' | 'stress' | 'edge-case' | 'adversarial' | 'realistic-dictation' | 'mega-stress';
@@ -41,7 +41,7 @@ interface SilencePolishScenario {
   description: string;
 }
 
-const silencePolishScenarios: SilencePolishScenario[] = [
+export const silencePolishScenarios: SilencePolishScenario[] = [
   // ═══════════════════════════════════════════════════════════════════════════
   // NUMBERED LISTS - Various formats
   // ═══════════════════════════════════════════════════════════════════════════
@@ -889,11 +889,10 @@ async function runAllTests(): Promise<void> {
   }
 }
 
-// Export scenarios for use in other test files
-export { silencePolishScenarios, SilencePolishScenario };
-
-// Run
-runAllTests().catch((err) => {
-  console.error('Fatal error:', err);
-  process.exit(1);
-});
+// Only run tests if this file is executed directly (not imported)
+if (require.main === module) {
+  runAllTests().catch((err) => {
+    console.error('Fatal error:', err);
+    process.exit(1);
+  });
+}

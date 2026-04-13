@@ -2,8 +2,8 @@
 /**
  * inject-text.swift
  * 
- * CLI tool to send text to the OutloudInput input method via distributed notifications.
- * This allows Outloud (Electron app) to inject text into any focused text field.
+ * CLI tool to send text to the RiftInput input method via distributed notifications.
+ * This allows Rift (Electron app) to inject text into any focused text field.
  * 
  * Usage:
  *   ./inject-text "Hello World"              - Replace mode (default)
@@ -36,7 +36,7 @@ let notificationCenter = DistributedNotificationCenter.default()
 // Handle special commands
 if args[0] == "--clear" {
     notificationCenter.postNotificationName(
-        NSNotification.Name("sh.outloud.clearText"),
+        NSNotification.Name("dev.myrift.clearText"),
         object: nil,
         userInfo: nil,
         deliverImmediately: true
@@ -47,7 +47,7 @@ if args[0] == "--clear" {
 
 if args[0] == "--enter" {
     notificationCenter.postNotificationName(
-        NSNotification.Name("sh.outloud.sendEnter"),
+        NSNotification.Name("dev.myrift.sendEnter"),
         object: nil,
         userInfo: nil,
         deliverImmediately: true
@@ -88,7 +88,7 @@ let payload = "\(mode):\(base64Text)"
 // Send the notification with payload in the object parameter
 // (userInfo is NOT delivered across process boundaries!)
 notificationCenter.postNotificationName(
-    NSNotification.Name("sh.outloud.injectText"),
+    NSNotification.Name("dev.myrift.injectText"),
     object: payload,
     userInfo: nil,
     deliverImmediately: true

@@ -5,15 +5,15 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
-    <string>Outloud Input</string>
+    <string>Rift Input</string>
     <key>CFBundleExecutable</key>
-    <string>OutloudInput</string>
+    <string>RiftInput</string>
     <key>CFBundleIdentifier</key>
-    <string>sh.outloud.inputmethod</string>
+    <string>dev.myrift.inputmethod</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>OutloudInput</string>
+    <string>RiftInput</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -29,9 +29,9 @@
     
     <!-- Input Method Configuration -->
     <key>InputMethodConnectionName</key>
-    <string>OutloudInput</string>
+    <string>RiftInput</string>
     <key>InputMethodServerControllerClass</key>
-    <string>OutloudInputController</string>
+    <string>RiftInputController</string>
     <key>InputMethodServerDelegateClass</key>
     <string>AppDelegate</string>
     
@@ -44,14 +44,14 @@
     <dict>
         <key>tsInputModeListKey</key>
         <dict>
-            <key>sh.outloud.inputmethod.outloud</key>
+            <key>dev.myrift.inputmethod.rift</key>
             <dict>
                 <key>TISInputSourceID</key>
-                <string>sh.outloud.inputmethod.outloud</string>
+                <string>dev.myrift.inputmethod.rift</string>
                 <key>TISIntendedLanguage</key>
                 <string>en</string>
                 <key>tsInputModeAlternateMenuIconFileKey</key>
-                <string>OutloudIcon</string>
+                <string>RiftIcon</string>
                 <key>tsInputModeCharacterRepertoireKey</key>
                 <array>
                     <string>Latn</string>
@@ -63,7 +63,7 @@
                 <key>tsInputModeKeyEquivalentModifiersKey</key>
                 <integer>0</integer>
                 <key>tsInputModeMenuIconFileKey</key>
-                <string>OutloudIcon</string>
+                <string>RiftIcon</string>
                 <key>tsInputModePrimaryInScriptKey</key>
                 <true/>
                 <key>tsInputModeScriptKey</key>
@@ -74,8 +74,6 @@
     
     <!-- Required for distributed notifications -->
     <key>NSAppleEventsUsageDescription</key>
-    <string>Outloud Input needs to receive text injection commands.</string>
+    <string>Rift Input needs to receive text injection commands.</string>
 </dict>
 </plist>
-
-

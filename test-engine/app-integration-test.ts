@@ -210,7 +210,7 @@ class AppIntegrationTest {
     
     // Kill any existing Electron processes
     try {
-      execSync('pkill -f "Electron.*outloud" 2>/dev/null', { stdio: 'ignore' });
+      execSync('pkill -f "Electron.*rift" 2>/dev/null', { stdio: 'ignore' });
       await this.sleep(1000);
     } catch (e) {}
     
@@ -543,7 +543,7 @@ class AppIntegrationTest {
     
     // Kill any remaining Electron processes
     try {
-      execSync('pkill -f "Electron.*outloud" 2>/dev/null', { stdio: 'ignore' });
+      execSync('pkill -f "Electron.*rift" 2>/dev/null', { stdio: 'ignore' });
     } catch (e) {}
     
     console.log('Done.');

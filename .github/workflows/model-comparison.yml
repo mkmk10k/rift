@@ -1,0 +1,97 @@
+name: Model Comparison Evals
+
+on:
+  workflow_dispatch:
+    inputs:
+      models:
+        description: "Comma-separated model configs to benchmark"
+        required: false
+        default: "qwen3,gemma4-e4b,gemma4-e4b-6bit"
+      skip_download:
+        description: "Skip model download step (use cached)"
+        type: boolean
+        default: false
+
+jobs:
+  benchmark:
+    runs-on: macos-15-xlarge
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install Node dependencies
+        run: bun install --frozen-lockfile || bun install
+
+      - name: Setup Python venv with mlx-lm (Gemma 4 support)
+        run: |
+          python3 -m venv /tmp/rift-mlx-env
+          /tmp/rift-mlx-env/bin/pip install --upgrade pip
+          /tmp/rift-mlx-env/bin/pip install git+https://github.com/ml-explore/mlx-lm.git@main huggingface_hub
+
+      - name: Verify mlx-lm Gemma 4 support
+        run: |
+          /tmp/rift-mlx-env/bin/python3 -c "
+          import mlx_lm, os
+          model_dir = os.path.dirname(mlx_lm.models.__file__)
+          files = [f for f in os.listdir(model_dir) if 'gemma4' in f]
+          assert files, 'gemma4 model type not found in mlx-lm'
+          print(f'mlx-lm {mlx_lm.__version__} — Gemma 4 supported ({files})')
+          "
+
+      - name: Verify prompts.json exists
+        run: |
+          if [ ! -f python/prompts.json ]; then
+            echo "::warning::prompts.json not found, falling back to example prompts"
+            cp python/prompts.example.json python/prompts.json
+          else
+            echo "Using production prompts.json"
+          fi
+
+      - name: Run model comparison
+        env:
+          RIFT_PYTHON_PATH: /tmp/rift-mlx-env/bin/python3
+        run: |
+          ARGS="--models ${{ github.event.inputs.models }}"
+          if [ "${{ github.event.inputs.skip_download }}" = "true" ]; then
+            ARGS="$ARGS --skip-download"
+          fi
+          npx ts-node test-engine/model-comparison.ts $ARGS
+
+      - name: Upload comparison results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-comparison-${{ github.run_id }}
+          path: |
+            test-engine/model-comparison-results.json
+            test-engine/latest-results.json
+            website/evals-data.json
+
+      - name: Post summary to job
+        if: always()
+        run: |
+          if [ -f test-engine/model-comparison-results.json ]; then
+            echo "## Model Comparison Results" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Runner: \`$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo unknown)\` · $(sysctl -n hw.memsize | awk '{printf "%.0f GB", $1/1024/1024/1024}')" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            /tmp/rift-mlx-env/bin/python3 -c "
+          import json
+          with open('test-engine/model-comparison-results.json') as f:
+              data = json.load(f)
+          print('| Model | Pass % | Latency | P2 | P3 | P4 |')
+          print('|-------|--------|---------|-----|-----|-----|')
+          for m in data['models']:
+              star = ' ⭐' if m['model'] == data.get('winner') else ''
+              print(f'| {m[\"displayName\"]}{star} | {m[\"passRate\"]:.1f}% | {round(m[\"avgLatencyMs\"])}ms | {m[\"phase2PassRate\"]:.0f}% | {m[\"phase3PassRate\"]:.0f}% | {m[\"phase4PassRate\"]:.0f}% |')
+          print()
+          print(f'**Winner:** {data[\"winnerReason\"]}')
+          for r in data.get('recommendations', []):
+              print(f'- {r}')
+          " >> $GITHUB_STEP_SUMMARY
+          fi

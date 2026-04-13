@@ -1,0 +1,124 @@
+# Rift Versioning and Release Workflow
+
+## Version Format
+
+**YYYY.MM.DD+<git-short-hash>**
+
+Example: `2026.01.02+cfc5e46`
+
+This format:
+- Matches the versioning shown on myrift.dev website
+- Is automatically generated before each package build
+- Includes the git commit hash for traceability
+
+## Automatic Version Generation
+
+The version is automatically updated when you run any release or package command.
+The script `scripts/update-version.js` generates the version from the current date and git commit.
+
+## Release Workflow
+
+### One Command Release
+
+Single command does everything:
+
+```bash
+bun run release        # Full release to GitHub
+bun run release:dry    # Preview without publishing
+```
+
+This automatically:
+0. **Runs evals** (release gate - blocks if pass rate < 70%)
+1. Builds DMG with current version
+2. Generates SHA256 checksum for download verification
+3. Creates changelog from git commits since last release
+4. Publishes GitHub Release with DMG + checksum attached
+5. Commits and pushes version bump to git
+6. Verifies release is live
+7. **Publishes evals** to https://myrift.dev/evals
+
+### Evals Integration
+
+Every release is tied to eval results:
+- Evals must pass (≥70%) before release proceeds
+- Eval results are tagged with the release version
+- Website shows version selector to compare historical releases
+- Run `bun run evals:export` to manually update website evals
+
+### What Gets Published
+
+- **GitHub Release**: `github.com/mkmk10k/rift/releases` (public repo — download links work)
+- **Artifacts**: 
+  - `Rift-{version}-arm64.dmg` - macOS installer
+  - `Rift-{version}-arm64.dmg.sha256` - Checksum file
+- **Release Notes**: Auto-generated from git commits
+
+### After Release: Sync Public Source
+
+After running `bun run release`, sync the source code to the public repo:
+
+```bash
+bun run publish-public
+```
+
+This keeps the open-source code on `mkmk10k/rift` in sync with the release.
+See `.publish-ignore` for what gets excluded (website, internal scripts, etc.).
+
+### Dry Run First
+
+Always preview before publishing:
+
+```bash
+bun run release:dry
+```
+
+This shows:
+- What version will be released
+- What files will be uploaded
+- What changelog will be generated
+- No actual changes are made
+
+## Manual Build (Without Release)
+
+If you just need to build without releasing:
+
+```bash
+bun run package        # Full package (DMG + ZIP)
+bun run package:dmg    # DMG only
+bun run package:zip    # ZIP only
+```
+
+Output directory: `dist-package/`
+
+## Update Checking
+
+Users can check for updates from the app's tray menu:
+- **Check for Updates...** → Fetches latest from GitHub Releases API
+- If newer version found, downloads DMG and reveals in Finder
+
+The update service uses the same GitHub releases that `bun run release` creates.
+
+## Prerequisites
+
+GitHub CLI must be installed and authenticated (one-time setup):
+
+```bash
+brew install gh
+gh auth login
+```
+
+## Important Notes
+
+- **Never manually edit the version in package.json** - use `bun run version`
+- The version is tied to the git commit hash at build time
+- Rebuilding on a different commit will produce a different version
+- The DMG filename includes the version for easy identification
+
+## Code Signing (Future)
+
+Currently the app is **not notarized**. For smoother user experience:
+- Apple Developer Program membership ($99/year) required
+- Add signing configuration to electron-builder
+- Notarize before distribution
+
+Users currently must right-click → Open on first launch.

@@ -1,15 +1,15 @@
 #!/bin/bash
-# Build script for OutloudInput input method
-# Creates OutloudInput.app bundle
+# Build script for RiftInput input method
+# Creates RiftInput.app bundle
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="$SCRIPT_DIR/build"
-APP_NAME="OutloudInput"
+APP_NAME="RiftInput"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 
-echo "Building OutloudInput input method..."
+echo "Building RiftInput input method..."
 
 # Clean previous build
 rm -rf "$BUILD_DIR"
@@ -20,7 +20,7 @@ mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
 
 # Copy Info.plist
-cp "$SCRIPT_DIR/OutloudInput/Info.plist" "$APP_BUNDLE/Contents/"
+cp "$SCRIPT_DIR/RiftInput/Info.plist" "$APP_BUNDLE/Contents/"
 
 # Compile Swift code
 echo "Compiling Swift code..."
@@ -32,7 +32,7 @@ swiftc \
     -target arm64-apple-macos12.0 \
     -parse-as-library \
     -O \
-    "$SCRIPT_DIR/OutloudInput/main.swift"
+    "$SCRIPT_DIR/RiftInput/main.swift"
 
 # Also compile for x86_64 if needed (universal binary)
 # swiftc \
@@ -42,7 +42,7 @@ swiftc \
 #     -framework Carbon \
 #     -target x86_64-apple-macos12.0 \
 #     -O \
-#     "$SCRIPT_DIR/OutloudInput/main.swift"
+#     "$SCRIPT_DIR/RiftInput/main.swift"
 # lipo -create "$APP_BUNDLE/Contents/MacOS/$APP_NAME" "$BUILD_DIR/${APP_NAME}_x86" -output "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 
 # Create PkgInfo
@@ -63,6 +63,4 @@ echo "  2. Log out and log back in, or run:"
 echo "     killall SystemUIServer"
 echo ""
 echo "  3. Enable in System Preferences -> Keyboard -> Input Sources"
-echo "     Click '+', find 'Outloud Input' under English"
-
-
+echo "     Click '+', find 'Rift Input' under English"

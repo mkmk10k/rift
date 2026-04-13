@@ -62,6 +62,12 @@ const PALETTES = {
     outer: { r: 240, g: 140, b: 40 },      // Deep gold
     glow: { r: 255, g: 200, b: 120 },      // Light gold
   },
+  paused: {
+    core: { r: 180, g: 180, b: 200 },      // Soft gray-blue
+    mid: { r: 160, g: 160, b: 180 },       // Muted blue-gray
+    outer: { r: 140, g: 140, b: 160 },     // Deeper gray
+    glow: { r: 200, g: 200, b: 220 },      // Light gray
+  },
   success: {
     core: { r: 100, g: 230, b: 140 },      // Fresh green
     mid: { r: 80, g: 210, b: 120 },        // Emerald
@@ -363,7 +369,7 @@ export const ParticleOrb = memo(function ParticleOrb({
     // Move window if dragging
     if (isDraggingRef.current) {
       // Round to integers for Electron's setPosition
-      window.outloud?.window?.dragMove?.(Math.round(deltaX), Math.round(deltaY))
+      window.rift?.window?.dragMove?.(Math.round(deltaX), Math.round(deltaY))
       // Reset start position to current screen position for continuous dragging
       dragStartRef.current = { x: e.screenX, y: e.screenY }
     }

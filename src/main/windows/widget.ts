@@ -13,9 +13,9 @@ export function createWidgetWindow(): BrowserWindow {
   const appPath = app.getAppPath();
   const preloadPath = path.join(appPath, 'dist', 'preload', 'preload', 'index.js');
   
-  console.log('[Outloud] App path:', appPath);
-  console.log('[Outloud] Is packaged:', app.isPackaged);
-  console.log('[Outloud] Preload path:', preloadPath);
+  console.log('[Rift] App path:', appPath);
+  console.log('[Rift] Is packaged:', app.isPackaged);
+  console.log('[Rift] Preload path:', preloadPath);
 
   // Black hole orb window - 360px orb + 20px padding for glow
   const windowSize = 380;
@@ -55,7 +55,7 @@ export function createWidgetWindow(): BrowserWindow {
     widget.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
     const rendererPath = path.join(appPath, 'dist', 'renderer', 'index.html');
-    console.log('[Outloud] Loading renderer from:', rendererPath);
+    console.log('[Rift] Loading renderer from:', rendererPath);
     widget.loadFile(rendererPath);
   }
 

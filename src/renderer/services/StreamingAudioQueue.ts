@@ -65,9 +65,6 @@ export class RealtimeAudioQueue {
 
     // If paused, wait until resumed - DON'T start any new audio
     if (this.isPaused) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2b23957f-9b12-46c7-8588-a208ce0ca914',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'StreamingAudioQueue.ts:polling',message:'Waiting for resume',data:{isPaused:this.isPaused,queueLength:this.queue.length,streamComplete:this.streamComplete},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H'})}).catch(()=>{});
-      // #endregion
       setTimeout(() => this.playNextRealtime(), 50)
       return
     }
@@ -90,14 +87,8 @@ export class RealtimeAudioQueue {
     const dataUrl = this.queue.shift()!
     
     try {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2b23957f-9b12-46c7-8588-a208ce0ca914',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'StreamingAudioQueue.ts:playChunk',message:'Playing chunk',data:{chunkNum:this.currentChunk,queueLength:this.queue.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H'})}).catch(()=>{});
-      // #endregion
       console.log(`[RealtimeQueue] Playing chunk ${this.currentChunk}`)
       await audioPlayer.play(dataUrl)
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2b23957f-9b12-46c7-8588-a208ce0ca914',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'StreamingAudioQueue.ts:chunkDone',message:'Chunk finished',data:{chunkNum:this.currentChunk,isPaused:this.isPaused},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H'})}).catch(()=>{});
-      // #endregion
     } catch (error) {
       console.error('[RealtimeQueue] Playback error:', error)
     }
@@ -107,10 +98,7 @@ export class RealtimeAudioQueue {
   }
 
   private finish() {
-    // #region agent log
-    const stack = new Error().stack?.split('\n').slice(1, 4).join(' <- ') || 'no stack';
-    fetch('http://127.0.0.1:7242/ingest/2b23957f-9b12-46c7-8588-a208ce0ca914',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'StreamingAudioQueue.ts:finish',message:'Finish called',data:{hasOnFinish:!!this.onFinish,queueLength:this.queue.length,stack:stack.substring(0,200)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'O'})}).catch(()=>{});
-    // #endregion
+    // const stack = new Error().stack?.split('\n').slice(1, 4).join(' <- ') || 'no stack';  // Debug helper
     console.log('[RealtimeQueue] Finished playback')
     this.queue.length = 0
     this.isPlaying = false
@@ -124,9 +112,6 @@ export class RealtimeAudioQueue {
    * Pause playback - can be resumed later
    */
   pause() {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/2b23957f-9b12-46c7-8588-a208ce0ca914',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'StreamingAudioQueue.ts:pause',message:'Pause called',data:{isPlaying:this.isPlaying,isPaused:this.isPaused,queueLength:this.queue.length,audioIsPlaying:audioPlayer.isPlaying},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B'})}).catch(()=>{});
-    // #endregion
     if (this.isPlaying && !this.isPaused) {
       console.log('[RealtimeQueue] Pause requested')
       this.isPaused = true
@@ -141,9 +126,6 @@ export class RealtimeAudioQueue {
    * Returns true if successfully resumed, false if nothing to resume
    */
   resume(): boolean {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/2b23957f-9b12-46c7-8588-a208ce0ca914',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'StreamingAudioQueue.ts:resume',message:'Resume called',data:{isPaused:this.isPaused,isPlaying:this.isPlaying,queueLength:this.queue.length,audioPlayerIsPlaying:audioPlayer.isPlaying,audioPlayerIsPaused:audioPlayer.isPaused,audioPlayerHasAudio:audioPlayer.hasAudio,streamComplete:this.streamComplete},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B,C'})}).catch(()=>{});
-    // #endregion
     if (this.isPaused) {
       // Check if there's anything to resume - including the CURRENT chunk!
       // audioPlayer.isPaused means there's a paused audio chunk we can resume
@@ -160,9 +142,6 @@ export class RealtimeAudioQueue {
       
       console.log('[RealtimeQueue] Resume requested, queue has', this.queue.length, 'chunks')
       this.isPaused = false
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/2b23957f-9b12-46c7-8588-a208ce0ca914',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'StreamingAudioQueue.ts:resume:flagSet',message:'isPaused set to false, calling audioPlayer.resume()',data:{isPaused:this.isPaused,queueLength:this.queue.length,hasMoreInQueue,hasCurrentChunk},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H'})}).catch(()=>{});
-      // #endregion
       
       // ALWAYS try to resume the audio player - this will unblock the await
       audioPlayer.resume()
@@ -192,10 +171,7 @@ export class RealtimeAudioQueue {
   }
 
   stop() {
-    // #region agent log
-    const stack = new Error().stack?.split('\n').slice(1, 5).join(' <- ') || 'no stack';
-    fetch('http://127.0.0.1:7242/ingest/2b23957f-9b12-46c7-8588-a208ce0ca914',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'StreamingAudioQueue.ts:stop',message:'Stop called',data:{stack:stack.substring(0,300)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'K'})}).catch(()=>{});
-    // #endregion
+    // const stack = new Error().stack?.split('\n').slice(1, 5).join(' <- ') || 'no stack';  // Debug helper
     console.log('[RealtimeQueue] Stop requested')
     this.isStopped = true
     this.isPaused = false
@@ -209,9 +185,6 @@ export class RealtimeAudioQueue {
   }
 
   reset() {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/2b23957f-9b12-46c7-8588-a208ce0ca914',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'StreamingAudioQueue.ts:reset',message:'Reset called',data:{},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'K'})}).catch(()=>{});
-    // #endregion
     console.log('[RealtimeQueue] Reset')
     this.queue.length = 0
     this.queue = []

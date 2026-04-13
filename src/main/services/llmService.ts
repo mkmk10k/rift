@@ -1,6 +1,6 @@
 /**
  * ═══════════════════════════════════════════════════════════════════════════════
- * LLM Service - Qwen3 Text Processing for Live Paste Enhancement
+ * LLM Service - MLX Text Processing for Live Paste Enhancement
  * ═══════════════════════════════════════════════════════════════════════════════
  * 
  * This service manages the LLM Python subprocess (llm_server.py) which provides
@@ -9,8 +9,8 @@
  * ARCHITECTURE:
  * - Persistent subprocess with JSON stdin/stdout protocol (same as STT)
  * - Fast model (Qwen3-0.6B) for real-time operations (Phase 2, 3)
- * - Quality model (Qwen3-1.7B) for final polish and Silence Polish
- * - Lazy loading: quality model only loaded when first needed
+ * - Deep model (Gemma 4 E4B) for final polish and Silence Polish
+ * - Lazy loading: deep model only loaded when first needed
  * 
  * SILENCE POLISH (BE-DRIVEN):
  * - Backend owns ALL silence detection - single source of truth
@@ -179,6 +179,17 @@ class LLMServer {
     console.log('[LLM Server] Python:', pythonPath);
     
     this.startingPromise = new Promise<void>((resolve, reject) => {
+      let startupSettled = false;
+      let startupTimeout: NodeJS.Timeout | undefined;
+      const settleStartup = (ok: boolean, err?: Error) => {
+        if (startupSettled) return;
+        startupSettled = true;
+        if (startupTimeout !== undefined) clearTimeout(startupTimeout);
+        this.startingPromise = null;
+        if (ok) resolve();
+        else reject(err ?? new Error('LLM server startup failed'));
+      };
+
       this.process = spawn(pythonPath, [scriptPath], {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
@@ -198,16 +209,33 @@ class LLMServer {
         console.log('[LLM Server]', data.toString().trim());
       });
       
+      // Set startup timeout
+      startupTimeout = setTimeout(() => {
+        if (!this.isReady) {
+          settleStartup(false, new Error('LLM server startup timeout'));
+        }
+      }, STARTUP_TIMEOUT_MS);
+      
       // Handle process exit
       this.process.on('close', (code) => {
         console.log(`[LLM Server] Process exited with code ${code}`);
+        if (!this.isReady) {
+          const hint =
+            code === null ? 'signal' : String(code);
+          settleStartup(
+            false,
+            new Error(`LLM server exited before ready (code ${hint})`),
+          );
+        }
         this.cleanup();
       });
       
       this.process.on('error', (err) => {
         console.error('[LLM Server] Process error:', err);
+        if (!this.isReady) {
+          settleStartup(false, err);
+        }
         this.cleanup();
-        reject(err);
       });
       
       // Handle responses
@@ -215,20 +243,11 @@ class LLMServer {
         this.handleResponse(line);
       });
       
-      // Set startup timeout
-      const timeout = setTimeout(() => {
-        if (!this.isReady) {
-          this.startingPromise = null;
-          reject(new Error('LLM server startup timeout'));
-        }
-      }, STARTUP_TIMEOUT_MS);
-      
       // Wait for ready signal
       const checkReady = () => {
+        if (startupSettled) return;
         if (this.isReady) {
-          clearTimeout(timeout);
-          this.startingPromise = null;
-          resolve();
+          settleStartup(true);
         } else {
           setTimeout(checkReady, 100);
         }

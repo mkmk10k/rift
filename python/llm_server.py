@@ -42,10 +42,46 @@ from typing import Optional, Tuple, Any
 # CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Model identifiers from Hugging Face / MLX Community
-FAST_MODEL = "mlx-community/Qwen3-0.6B-4bit"
-QUALITY_MODEL = "mlx-community/Qwen3-1.7B-4bit"  # Best balance of speed vs accuracy
-DEEP_MODEL = "mlx-community/Qwen3-4B-4bit"       # High accuracy for background cleanup
+import os
+import re
+
+# Multi-model configuration: select via RIFT_MODEL_CONFIG env var
+MODEL_CONFIGS = {
+    "qwen3": {
+        "fast": "mlx-community/Qwen3-0.6B-4bit",
+        "quality": "mlx-community/Qwen3-1.7B-4bit",
+        "deep": "mlx-community/Qwen3-4B-4bit",
+        "family": "qwen3",
+    },
+    "gemma4-e4b": {
+        "fast": "mlx-community/Qwen3-0.6B-4bit",
+        "quality": "mlx-community/Qwen3-1.7B-4bit",
+        "deep": "mlx-community/gemma-4-e4b-it-4bit",
+        "family": "gemma4",
+    },
+    "gemma4-e4b-6bit": {
+        "fast": "mlx-community/Qwen3-0.6B-4bit",
+        "quality": "mlx-community/Qwen3-1.7B-4bit",
+        "deep": "mlx-community/gemma-4-e4b-it-6bit",
+        "family": "gemma4",
+    },
+    "gemma4-moe": {
+        "fast": "mlx-community/Qwen3-0.6B-4bit",
+        "quality": "mlx-community/Qwen3-1.7B-4bit",
+        "deep": "mlx-community/gemma-4-26b-a4b-it-4bit",
+        "family": "gemma4",
+    },
+}
+
+_active_config_name = os.environ.get("RIFT_MODEL_CONFIG", "gemma4-e4b")
+if _active_config_name not in MODEL_CONFIGS:
+    _active_config_name = "gemma4-e4b"
+_active_config = MODEL_CONFIGS[_active_config_name]
+
+FAST_MODEL = _active_config["fast"]
+QUALITY_MODEL = _active_config["quality"]
+DEEP_MODEL = _active_config["deep"]
+_model_family = _active_config["family"]
 
 # Latency thresholds (ms)
 LATENCY_THRESHOLD_MERGE = 100
@@ -57,11 +93,92 @@ LATENCY_THRESHOLD_DEEP = 5000  # Deep cleanup can take longer (background)
 _fast_model_busy = False
 _last_fast_model_use = 0
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PROMPT FORMAT CONVERSION (model-agnostic prompts)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def parse_qwen3_prompt(prompt: str) -> list:
+    """Parse a Qwen3-formatted prompt string into a list of message dicts.
+
+    Turns must end at the same special tokens as prompts.json. The end token includes
+    the substring "redacted_im_end"; matching only "im_end" leaves stray markers inside
+    message bodies and breaks apply_chat_template for non-Qwen models.
+    """
+    _end = r'(?:<\|im_end\|>|<\|redacted_im_end\|>)'
+    messages = []
+    parts = re.split(r'<\|im_start\|>', prompt)
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        match = re.match(
+            rf'(system|user|assistant)\n(.*?)(?:{_end}|$)',
+            part,
+            re.DOTALL,
+        )
+        if match:
+            role = match.group(1)
+            content = match.group(2).strip()
+            content = re.sub(r'\s*/no_think\s*$', '', content).strip()
+            if content or role == "assistant":
+                messages.append({"role": role, "content": content})
+    return messages
+
+
+_gemma_chat_template_logged = False
+_gemma_polish_prompt_logged = False
+
+
+def format_prompt_for_model(prompt: str, tokenizer) -> str:
+    """
+    Convert a Qwen3-formatted prompt to the loaded model's native format.
+
+    For qwen3: returns prompt unchanged.
+
+    For gemma4 configs: fast + quality weights are still Qwen3 MLX; only the deep model
+    is Gemma. Passing Qwen prompts through Qwen's apply_chat_template can change few-shot
+    layout vs the baseline and destroy scores — keep the raw string for Qwen tokenizers.
+    Only the Gemma deep tokenizer gets messages + apply_chat_template().
+    """
+    global _gemma_chat_template_logged
+
+    if _model_family == "qwen3":
+        return prompt
+
+    # Gemma configs: convert only for the actual Gemma (deep) tokenizer.
+    if tokenizer is not _deep_tokenizer:
+        return prompt
+
+    messages = parse_qwen3_prompt(prompt)
+    if not messages:
+        return prompt
+
+    # Remove trailing empty-assistant message (the generation prompt)
+    if messages and messages[-1]["role"] == "assistant" and not messages[-1]["content"]:
+        messages = messages[:-1]
+
+    try:
+        formatted = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        if _model_family == "gemma4" and not _gemma_chat_template_logged:
+            _gemma_chat_template_logged = True
+            preview = formatted[:600].replace("\n", "\\n")
+            log(
+                f"[Gemma chat_template] {len(messages)} msgs | "
+                f"formatted preview: {preview}"
+            )
+        return formatted
+    except Exception as e:
+        log(f"apply_chat_template failed for {_model_family}: {e}")
+        return prompt
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # PROMPT TEMPLATES (loaded from external config)
 # ═══════════════════════════════════════════════════════════════════════════════
-
-import os
 
 def load_prompts():
     """
@@ -110,9 +227,54 @@ def get_correct_sentence_prompt():
 def get_extract_new_words_prompt():
     return get_prompts()["EXTRACT_NEW_WORDS_PROMPT"]
 
+# Extra few-shot turns for Gemma deep model (phone + URL formatting)
+# Uses the same end-token as prompts.json so parse_qwen3_prompt() handles them correctly.
+_IM_END = "<|" + "im_end" + "|>"
+_GEMMA_POLISH_EXTRA_TURNS = (
+    "<|im_start|>user\nCall five five five eight six seven five three oh nine" + _IM_END + "\n"
+    "<|im_start|>assistant\nCall 555-867-5309." + _IM_END + "\n"
+    "<|im_start|>user\nCheck out w w w dot example dot com slash docs for more info" + _IM_END + "\n"
+    "<|im_start|>assistant\nCheck out www.example.com/docs for more info." + _IM_END + "\n"
+    "<|im_start|>user\nMy number is eight hundred five five five one two three four" + _IM_END + "\n"
+    "<|im_start|>assistant\nMy number is 800-555-1234." + _IM_END + "\n"
+    "<|im_start|>user\nVisit h t t p s colon slash slash github dot com slash docs" + _IM_END + "\n"
+    "<|im_start|>assistant\nVisit https://github.com/docs." + _IM_END + "\n"
+)
+
+
+# Extra system-level instruction for Gemma on format conversion
+_GEMMA_FORMAT_ADDENDUM = (
+    "\n\nCRITICAL FORMAT CONVERSIONS (always apply):\n"
+    "- Spoken phone numbers → digits with dashes: "
+    "\"five five five one two three four\" → \"555-1234\"\n"
+    "- Spoken URLs → proper URLs: "
+    "\"w w w dot example dot com slash docs\" → \"www.example.com/docs\"\n"
+    "- Spoken \"h t t p s colon slash slash\" → \"https://\"\n"
+    "- Spoken \"dot\" between domain parts → \".\"\n"
+    "- Spoken \"slash\" in paths → \"/\"\n"
+    "- Spoken \"at\" in emails → \"@\"\n"
+)
+
+
 def get_polish_prompt(mode: str):
-    prompts = get_prompts()["POLISH_PROMPTS"]
-    return prompts.get(mode, prompts["clean"])
+    prompts = get_prompts()
+    base = prompts["POLISH_PROMPTS"]
+    template = base.get(mode, base["clean"])
+    if _model_family == "gemma4":
+        gemma_over = prompts.get("POLISH_PROMPTS_GEMMA4")
+        if isinstance(gemma_over, dict) and gemma_over.get(mode):
+            return gemma_over[mode]
+        # Augment system message with format-conversion rules
+        _sys_end = _IM_END
+        if _sys_end in template:
+            first_end = template.index(_sys_end)
+            template = template[:first_end] + _GEMMA_FORMAT_ADDENDUM + template[first_end:]
+        # Inject extra few-shots before the final user turn
+        if "{final_text}" in template:
+            marker = "<|im_start|>user\n{final_text}"
+            if marker in template:
+                template = template.replace(marker, _GEMMA_POLISH_EXTRA_TURNS + marker, 1)
+    return template
 
 def get_deep_cleanup_prompt():
     return get_prompts()["DEEP_CLEANUP_PROMPT"]
@@ -122,18 +284,6 @@ def get_tts_transform_prompt(mode: str):
     prompts = get_prompts().get("TTS_TRANSFORM_PROMPTS", {})
     return prompts.get(mode, prompts.get("developer", ""))
 
-# Legacy compatibility - these will be replaced with function calls
-MERGE_PROMPT = None  # Use get_merge_prompt() instead
-
-# Legacy prompt constants removed - now loaded from prompts.json
-# Use get_correct_sentence_prompt() and get_extract_new_words_prompt() instead
-CORRECT_SENTENCE_PROMPT = None
-EXTRACT_NEW_WORDS_PROMPT = None
-
-# Legacy prompt constants removed - now loaded from prompts.json
-# Use get_polish_prompt(mode) and get_deep_cleanup_prompt() instead
-POLISH_PROMPTS = None
-DEEP_CLEANUP_PROMPT = None
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MODEL MANAGEMENT
@@ -281,8 +431,9 @@ def check_gpu_memory_available(required_gb: float = 3.0) -> bool:
         available_gb = get_available_memory_gb()
         
         # With model swapping, we need ~3GB for fast + deep
-        if total_gb < 8:
-            log(f"[Memory] Total RAM: {total_gb:.1f}GB - too low for deep model")
+        min_ram = float(os.environ.get("RIFT_MIN_RAM_GB", "8"))
+        if total_gb < min_ram:
+            log(f"[Memory] Total RAM: {total_gb:.1f}GB < {min_ram:.0f}GB minimum - too low for deep model")
             return False
         
         if available_gb < required_gb:
@@ -392,15 +543,17 @@ def load_deep_model(swap_out_quality: bool = True) -> Tuple[Optional[Any], Optio
         elapsed = int((time.time() - start) * 1000)
         log(f"Deep model loaded in {elapsed}ms")
         
-        # CRITICAL: Warmup inference to stabilize model
-        # First inference after load can produce garbage on MLX
         log("Warming up deep model...")
         warmup_start = time.time()
         try:
+            warmup_prompt = format_prompt_for_model(
+                "<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n",
+                _deep_tokenizer,
+            )
             warmup_result = mlx_lm.generate(
                 _deep_model, 
                 _deep_tokenizer, 
-                prompt="<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n",
+                prompt=warmup_prompt,
                 max_tokens=10
             )
             warmup_ms = int((time.time() - warmup_start) * 1000)
@@ -445,28 +598,23 @@ def is_fast_model_busy() -> bool:
 
 
 def generate_text(model: Any, tokenizer: Any, prompt: str, max_tokens: int = 150, fallback: str = "") -> str:
-    """Generate text using the model
+    """Generate text using the model.
     
-    Args:
-        model: The loaded model
-        tokenizer: The loaded tokenizer
-        prompt: The prompt to send to the model
-        max_tokens: Maximum tokens to generate
-        fallback: Text to return if generation fails
-    
-    Returns:
-        The generated text, or fallback if generation fails
+    Prompts are stored in Qwen3 chat format and automatically converted
+    to the active model's native format via format_prompt_for_model().
     """
     mlx_lm = import_mlx_lm()
     
+    # Convert prompt to the loaded model's native chat format
+    formatted_prompt = format_prompt_for_model(prompt, tokenizer)
+    
     try:
-        # Create deterministic sampler (temp=0 means argmax)
         sampler = mlx_lm.sample_utils.make_sampler(temp=0.0)
         
         response = mlx_lm.generate(
             model,
             tokenizer,
-            prompt=prompt,
+            prompt=formatted_prompt,
             max_tokens=max_tokens,
             verbose=False,
             sampler=sampler,
@@ -475,27 +623,23 @@ def generate_text(model: Any, tokenizer: Any, prompt: str, max_tokens: int = 150
         log(f"Generation error: {e}")
         return fallback
     
-    # Strip the response
     response = response.strip()
     
     # Qwen3 may include <think>...</think> reasoning blocks
-    # We only want the final answer, not the thinking process
     if "<think>" in response:
-        # Find the end of thinking block
         think_end = response.find("</think>")
         if think_end != -1:
-            # Get content after </think>
-            response = response[think_end + 8:].strip()
+            _think_close = "</redacted_thinking>"
+            response = response[think_end + len(_think_close) :].strip()
         else:
-            # Thinking block didn't close - model is still thinking
-            # This means we hit max_tokens during thinking
             log("WARNING: Model hit max_tokens during thinking, using fallback")
             return fallback
     
-    # Also strip any remaining special tokens
+    # Strip model-specific special tokens from output
     response = response.replace("<|im_end|>", "").strip()
+    response = response.replace("<end_of_turn>", "").strip()
+    response = response.replace("<eos>", "").strip()
     
-    # If response is empty after processing, use fallback
     if not response:
         return fallback
     
@@ -528,9 +672,24 @@ def _quick_diff_check(pasted: str, new_text: str) -> tuple:
     if norm_pasted == norm_new:
         return (True, "")
     
-    # Case 2: New text is just pasted + suffix (simple append)
+    # Case 2: After normalization, new_text extends pasted (e.g. commas mid-sentence).
+    # Raw indices != len(pasted); recover trailing new words by matching normalized tail.
     if norm_new.startswith(norm_pasted):
-        # Find where the new content starts in original
+        extra_norm = norm_new[len(norm_pasted) :].strip()
+        if not extra_norm:
+            return (True, "")
+        words_extra = extra_norm.split()
+        if words_extra and len(words_extra) <= 12:
+            words_new = new_text.split()
+            if len(words_new) >= len(words_extra):
+                tail = " ".join(words_new[-len(words_extra) :])
+                if _normalize_for_comparison(tail) == extra_norm:
+                    return (True, tail)
+        # Normalized drift without a clean trailing word match — use LLM
+        return (False, "")
+    
+    # Case 3: Raw pasted prefix + suffix (indices align)
+    if new_text.startswith(pasted):
         suffix_start = len(pasted)
         while suffix_start < len(new_text) and new_text[suffix_start] in ' .,!?;:\'"':
             suffix_start += 1
@@ -797,9 +956,12 @@ def sanitize_output(text: str) -> str:
     result = re.sub(r'/no_think\s*', '', result, flags=re.IGNORECASE)
     result = re.sub(r'/think\s*', '', result, flags=re.IGNORECASE)
     
-    # Remove special tokens that might leak through
+    # Remove special tokens that might leak through (Qwen3 + Gemma 4)
     result = re.sub(r'<\|im_(?:start|end)\|>\s*', '', result)
     result = re.sub(r'<\|endoftext\|>\s*', '', result)
+    result = re.sub(r'<start_of_turn>\s*\w*\s*', '', result)
+    result = re.sub(r'<end_of_turn>\s*', '', result)
+    result = re.sub(r'<eos>\s*', '', result)
     
     # Remove common LLM prefixes
     result = re.sub(r'^(?:Answer|Output|Response|Result|Here[\'s ]* (?:the|your)):\s*', '', result, flags=re.IGNORECASE)
@@ -986,8 +1148,11 @@ def handle_polish_text(pasted_text: str, final_text: str, mode: str = "clean") -
             # Normal length - process as single text
             prompt = prompt_template.format(pasted_text=pasted_text, final_text=final_text)
             
-            # Allow more tokens for final polish (input length + buffer)
-            max_tokens = min(word_count * 4 + 100, 2000)
+            # Allow more tokens for final polish (input length + buffer).
+            # Qwen3 may emit <think>...</think> blocks despite /no_think, consuming
+            # ~100-300 tokens for reasoning.  Add headroom so the actual answer survives.
+            think_budget = 300 if _model_family == "qwen3" else 0
+            max_tokens = min(word_count * 4 + 100 + think_budget, 2000)
             
             result = generate_text(
                 model, 
@@ -1452,22 +1617,27 @@ def cleanup_all_models() -> None:
 
 def initialize() -> None:
     """Initialize the LLM server - load fast model"""
-    log("Initializing LLM server...")
+    log(f"Initializing LLM server (config={_active_config_name}, family={_model_family})...")
+    log(f"  Fast:    {FAST_MODEL}")
+    log(f"  Quality: {QUALITY_MODEL}")
+    log(f"  Deep:    {DEEP_MODEL}")
     
-    # Register cleanup handler for graceful shutdown
     import atexit
     atexit.register(cleanup_all_models)
     
     try:
-        # Load fast model on startup for immediate availability
         load_start = time.time()
         load_fast_model()
         load_time = int((time.time() - load_start) * 1000)
         
-        # Signal ready with load time
         print(json.dumps({
             "type": "ready",
-            "fast_model_load_time_ms": load_time
+            "fast_model_load_time_ms": load_time,
+            "model_config": _active_config_name,
+            "model_family": _model_family,
+            "fast_model": FAST_MODEL,
+            "quality_model": QUALITY_MODEL,
+            "deep_model": DEEP_MODEL,
         }), flush=True)
         log("Server ready")
         

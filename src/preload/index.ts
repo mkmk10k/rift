@@ -1,11 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { OutloudAPI, TTSRequest, AudioPlayRequest } from '../shared/types';
+import type { RiftAPI, TTSRequest, AudioPlayRequest } from '../shared/types';
 
 /**
  * Preload script - safely exposes IPC APIs to the renderer process
  */
 
-const outloudAPI: OutloudAPI = {
+const riftAPI: RiftAPI = {
   tts: {
     synthesize: (request: TTSRequest) => 
       ipcRenderer.invoke('tts:synthesize', request),
@@ -139,8 +139,8 @@ const outloudAPI: OutloudAPI = {
       ipcRenderer.invoke('input-source:get-current'),
     switchTo: (sourceId: string) =>
       ipcRenderer.invoke('input-source:switch-to', sourceId),
-    switchToOutloud: () =>
-      ipcRenderer.invoke('input-source:switch-to-outloud'),
+    switchToRift: () =>
+      ipcRenderer.invoke('input-source:switch-to-rift'),
   },
   models: {
     check: () => 
@@ -307,5 +307,5 @@ const outloudAPI: OutloudAPI = {
 };
 
 // Expose the API to the renderer process
-contextBridge.exposeInMainWorld('outloud', outloudAPI);
+contextBridge.exposeInMainWorld('rift', riftAPI);
 

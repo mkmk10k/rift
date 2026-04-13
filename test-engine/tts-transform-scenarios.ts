@@ -649,7 +649,7 @@ export const contextDetectionScenarios: ContextDetectionScenario[] = [
     id: 'ctx-cursor',
     name: 'Cursor IDE',
     description: 'Cursor app should trigger developer mode',
-    context: { appName: 'Cursor', windowTitle: 'handlers.ts - outloud-electron', url: '' },
+    context: { appName: 'Cursor', windowTitle: 'handlers.ts - rift-app', url: '' },
     expectedMode: 'developer',
   },
   {

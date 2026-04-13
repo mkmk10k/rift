@@ -1,0 +1,52 @@
+---
+description: Measurable design criteria for the Rift marketing site — hierarchy, legibility, consistency, motion
+globs: website/**/*
+alwaysApply: false
+---
+
+# Rift website — design principles (agent rubric)
+
+Use this when reviewing `website/` screenshots, CSS, or HTML. **Legibility for dyslexia, low vision, and ADHD is non-negotiable.** Pixel-diff baselines prove “unchanged”; this document defines “good.”
+
+## Pillar 1 — Visual hierarchy and clarity
+
+- **Display type & fixed UI:** oversized headlines (`clamp` / display size) must **not clip** under the sticky nav or the viewport top. Use enough **section `padding-top`**, sane **`line-height`** (avoid ultra-tight 0.9 on huge type unless padding compensates), **`scroll-margin-top`** on anchor targets, and **`scroll-padding-top`** on `html` so in-page links clear the header. If it looks “cut off” in a screenshot, it fails — even when contrast ratios pass.
+- Each major section has **one clear focal point** (heading, hero visual, or primary CTA) before supporting copy.
+- **Headings vs body:** heading font size should be clearly larger than body (aim ≥ **1.5×** body size for `h2`+ vs paragraph).
+- Avoid **more than three** distinct visual weights in one viewport (e.g. display / subhead / body — not five competing sizes).
+- **Card grids:** equal visual weight per card; avoid orphan rows (e.g. 3+1); use explicit breakpoints where `auto-fit` would break.
+
+## Pillar 2 — Whitespace and breathing room
+
+- Section vertical padding: **never below ~24px** between distinct content blocks at default scale; scale with `rem` / Pretext-driven padding.
+- **Gap between text blocks:** at least **one line-height** of separation between stacked paragraphs or list blocks where they are siblings in layout. **Footer / meta stacks** (build string, links, legal) need clear vertical rhythm — not a single undifferentiated block of small grey text.
+- **Density:** if a section’s text+UI fills more than **~85%** of its visible box with no intentional “air,” reconsider padding or max-width.
+- **Hero:** leave enough vertical space that the headline and subcopy are not cramped (often **~40%+** of viewport height combined margin+padding+gap on desktop for hero-style sections).
+
+## Pillar 3 — Legibility (accessibility-first)
+
+- **Contrast:** normal text vs its effective background **≥ 4.5:1** (WCAG AA). **High-contrast theme:** aim **≥ 7:1** for primary text where feasible.
+- **Minimum font size:** no primary reading text below **14px** computed size at any viewport × `FONT_STEPS` scale (see `main.js`).
+- **Measure (line length):** body copy **~45–75 characters** per line where possible; if much wider, constrain `max-width` on prose containers.
+- **Line-height:** body **≥ 1.4**; headings **≥ 1.1** unless display size is huge.
+- **Text on images / video:** only with overlay, gradient, or shadow so contrast still passes.
+- **Touch targets:** primary tap/click areas **≥ 44×44px** (nav links, buttons, font/theme controls).
+
+## Pillar 4 — Consistency
+
+- Same **semantic level** → same treatment (e.g. all section `h2` share one pattern).
+- **Accent color** (`--accent`): use sparingly — labels, highlights, not random borders on every box.
+- **Spacing scale:** prefer `rem`, design tokens, and repeated gaps — avoid one-off magic pixels unless documented.
+
+## Pillar 5 — Motion and interaction
+
+- Respect **`prefers-reduced-motion`** for non-essential animation; essential feedback may remain subtle.
+- **Mobile:** no critical content only on hover; hover may enhance desktop only.
+- **Focus:** `:focus-visible` styles remain visible and consistent with brand (see existing focus rules in `style.css`).
+- **Keyboard:** full page navigable (complements Lighthouse a11y category).
+
+## Agent behavior
+
+- **Do not** treat passing pixel-diff alone as “ship it” if hierarchy or contrast fails this rubric.
+- **Autonomous fixes** are allowed for **CSS/HTML structure** (spacing, contrast tokens, max-width, breakpoints). **Do not** rewrite marketing copy without the user.
+- After substantive `website/` changes, run the **design-audit** skill (see `.cursor/skills/design-audit.md`) before refreshing visual baselines.

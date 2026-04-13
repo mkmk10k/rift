@@ -1,63 +1,44 @@
-# ═══════════════════════════════════════════════════════════════════════════════
-# Rift - .gitignore
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# ─── Private Configuration ───
-# Full optimized prompts are now included in the repo
-
-# ─── Dependencies ───
+# Dependencies
 node_modules/
-.bun/
+website/node_modules/
 
-# ─── Build Artifacts ───
+# Build outputs
 dist/
 dist-package/
 build/
-out/
-*.dmg
-*.app
 
-# ─── Python ───
+# Python bundle (1GB+, built locally)
+python-bundle/
+.python-download/
+
+# ML models (large, downloaded at runtime)
+models/
+Chatterbox-Full-MLX-withConds/
+Chatterbox-TTS-converted/
+Chatterbox-Turbo-MLX/
+Chatterbox-Turbo-converted/
+
+# Python cache
 __pycache__/
 *.pyc
-*.pyo
-.venv/
-venv/
-.python-version
 
-# ─── Environment ───
-.env
-.env.local
-.env.*.local
+# Test artifacts
+test-engine/.cache/
+test-engine/reports/
+test-engine/latest-results.json
 
-# ─── Logs ───
+# OS files
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
 *.log
 npm-debug.log*
 
-# ─── Test Artifacts ───
-test-engine/history.jsonl
-test-engine/*.log
-test-engine/captures/
-
-# ─── Editor / IDE ───
-.idea/
-.vscode/
-*.swp
-*.swo
-.cursor/
-
-# ─── OS ───
-.DS_Store
-Thumbs.db
-
-# ─── Models (downloaded separately) ───
-models/
-*.mlmodelc
-*.gguf
-
-# ─── Electron ───
-release/
-
-# ─── Temporary ───
-*.tmp
-*.temp
+# Environment / credentials (NEVER commit these)
+.env
+.env.local
+.env.apple

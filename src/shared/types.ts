@@ -195,7 +195,7 @@ export interface RealtimeChunk {
 }
 
 // Window API exposed to renderer
-export interface OutloudAPI {
+export interface RiftAPI {
   tts: {
     synthesize: (request: TTSRequest) => Promise<TTSResult>;
     synthesizeStream: (request: TTSRequest) => Promise<{ success: boolean; error?: string }>;
@@ -308,7 +308,7 @@ export interface OutloudAPI {
   inputSource: {
     getCurrent: () => Promise<{ success: boolean; sourceId?: string; error?: string }>;
     switchTo: (sourceId: string) => Promise<{ success: boolean; error?: string }>;
-    switchToOutloud: () => Promise<{ success: boolean; error?: string }>;
+    switchToRift: () => Promise<{ success: boolean; error?: string }>;
   };
   settings: {
     getAll: () => Promise<AppSettings>;
@@ -536,11 +536,21 @@ export interface AppSettings {
   
   /** Enable rolling sentence correction during speech */
   llmRollingCorrection: boolean;
+  
+  // TTS Settings
+  /** TTS model to use: 'kokoro' or 'chatterbox' */
+  ttsModel?: 'kokoro' | 'chatterbox';
+  /** Voice for Kokoro TTS */
+  ttsVoiceKokoro?: string;
+  /** Voice for Chatterbox TTS */
+  ttsVoiceChatterbox?: string;
+  /** Whether Chatterbox model has been downloaded */
+  chatterboxDownloaded?: boolean;
 }
 
 declare global {
   interface Window {
-    outloud: OutloudAPI;
+    rift: RiftAPI;
   }
 }
 

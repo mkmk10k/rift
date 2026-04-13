@@ -2,12 +2,26 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <!-- Microphone access for STT -->
   <key>com.apple.security.device.audio-input</key>
   <true/>
   <key>com.apple.security.device.microphone</key>
   <true/>
+
+  <!-- Apple Events for pasting text into other apps -->
   <key>com.apple.security.automation.apple-events</key>
+  <true/>
+
+  <!-- Electron: V8 JIT compilation -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+
+  <!-- Electron: executable memory for renderer -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+
+  <!-- Native modules: uiohook-napi, ffmpeg-static -->
+  <key>com.apple.security.cs.disable-library-validation</key>
   <true/>
 </dict>
 </plist>
-

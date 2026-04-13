@@ -1,12 +1,12 @@
 /**
- * OutloudInput - macOS Input Method for Live Text Injection
+ * RiftInput - macOS Input Method for Live Text Injection
  * 
- * This input method allows Outloud to inject transcribed text
+ * This input method allows Rift to inject transcribed text
  * into ANY focused text field, including Electron apps and browsers.
  * 
  * It works by:
  * 1. Running as a background input method service
- * 2. Listening for distributed notifications from Outloud
+ * 2. Listening for distributed notifications from Rift
  * 3. Using IMKInputController's client to insert text
  */
 
@@ -22,15 +22,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Create the input method server
         server = IMKServer(
-            name: "OutloudInput",
+            name: "RiftInput",
             bundleIdentifier: Bundle.main.bundleIdentifier!
         )
         
-        // Listen for text injection requests from Outloud
+        // Listen for text injection requests from Rift
         DistributedNotificationCenter.default().addObserver(
             self,
             selector: #selector(handleInjectText(_:)),
-            name: NSNotification.Name("sh.outloud.injectText"),
+            name: NSNotification.Name("dev.myrift.injectText"),
             object: nil,
             suspensionBehavior: .deliverImmediately
         )
@@ -39,7 +39,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DistributedNotificationCenter.default().addObserver(
             self,
             selector: #selector(handleClearText(_:)),
-            name: NSNotification.Name("sh.outloud.clearText"),
+            name: NSNotification.Name("dev.myrift.clearText"),
             object: nil,
             suspensionBehavior: .deliverImmediately
         )
@@ -48,12 +48,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DistributedNotificationCenter.default().addObserver(
             self,
             selector: #selector(handleSendEnter(_:)),
-            name: NSNotification.Name("sh.outloud.sendEnter"),
+            name: NSNotification.Name("dev.myrift.sendEnter"),
             object: nil,
             suspensionBehavior: .deliverImmediately
         )
         
-        NSLog("[OutloudInput] Input method started and listening for notifications")
+        NSLog("[RiftInput] Input method started and listening for notifications")
     }
     
     @objc func handleInjectText(_ notification: Notification) {
@@ -61,14 +61,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // We receive the payload in the `object` parameter instead.
         // Format: "mode:base64text"
         guard let payload = notification.object as? String else {
-            NSLog("[OutloudInput] Invalid notification - missing payload")
+            NSLog("[RiftInput] Invalid notification - missing payload")
             return
         }
         
         // Parse the payload
         let parts = payload.split(separator: ":", maxSplits: 1)
         guard parts.count == 2 else {
-            NSLog("[OutloudInput] Invalid payload format")
+            NSLog("[RiftInput] Invalid payload format")
             return
         }
         
@@ -78,40 +78,40 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Decode the base64 text
         guard let textData = Data(base64Encoded: base64Text),
               let text = String(data: textData, encoding: .utf8) else {
-            NSLog("[OutloudInput] Could not decode base64 text")
+            NSLog("[RiftInput] Could not decode base64 text")
             return
         }
         
-        NSLog("[OutloudInput] Received inject request: mode=\(mode), text=\(text.prefix(50))...")
+        NSLog("[RiftInput] Received inject request: mode=\(mode), text=\(text.prefix(50))...")
         
         // Post to main thread to ensure UI operations work
         DispatchQueue.main.async {
-            OutloudInputController.injectText(text, mode: mode)
+            RiftInputController.injectText(text, mode: mode)
         }
     }
     
     @objc func handleClearText(_ notification: Notification) {
-        NSLog("[OutloudInput] Received clear request")
+        NSLog("[RiftInput] Received clear request")
         DispatchQueue.main.async {
-            OutloudInputController.clearText()
+            RiftInputController.clearText()
         }
     }
     
     @objc func handleSendEnter(_ notification: Notification) {
-        NSLog("[OutloudInput] Received send Enter request")
+        NSLog("[RiftInput] Received send Enter request")
         DispatchQueue.main.async {
-            OutloudInputController.sendEnter()
+            RiftInputController.sendEnter()
         }
     }
     
     func applicationWillTerminate(_ notification: Notification) {
-        NSLog("[OutloudInput] Input method shutting down")
+        NSLog("[RiftInput] Input method shutting down")
     }
 }
 
 // MARK: - Input Controller
 
-class OutloudInputController: IMKInputController {
+class RiftInputController: IMKInputController {
     
     // Static reference to the current active client
     private static var currentClient: IMKTextInput?
@@ -121,22 +121,22 @@ class OutloudInputController: IMKInputController {
         super.init(server: server, delegate: delegate, client: inputClient)
         
         if let client = inputClient as? IMKTextInput {
-            OutloudInputController.currentClient = client
-            NSLog("[OutloudInput] Client connected: \(type(of: inputClient))")
+            RiftInputController.currentClient = client
+            NSLog("[RiftInput] Client connected: \(type(of: inputClient))")
         }
     }
     
     override func activateServer(_ sender: Any!) {
         super.activateServer(sender)
         if let client = sender as? IMKTextInput {
-            OutloudInputController.currentClient = client
-            NSLog("[OutloudInput] Server activated for client")
+            RiftInputController.currentClient = client
+            NSLog("[RiftInput] Server activated for client")
         }
     }
     
     override func deactivateServer(_ sender: Any!) {
         super.deactivateServer(sender)
-        NSLog("[OutloudInput] Server deactivated")
+        NSLog("[RiftInput] Server deactivated")
     }
     
     // Pass through all keyboard events - we don't intercept typing
@@ -150,11 +150,11 @@ class OutloudInputController: IMKInputController {
     
     static func injectText(_ text: String, mode: String) {
         guard let client = currentClient else {
-            NSLog("[OutloudInput] No active client to inject text into")
+            NSLog("[RiftInput] No active client to inject text into")
             // Try to get client from current input context
             if let context = NSTextInputContext.current,
                let activeClient = context.client as? IMKTextInput {
-                NSLog("[OutloudInput] Found client via NSTextInputContext")
+                NSLog("[RiftInput] Found client via NSTextInputContext")
                 insertIntoClient(activeClient, text: text, mode: mode)
             }
             return
@@ -177,18 +177,18 @@ class OutloudInputController: IMKInputController {
             // Insert the complete new text
             client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
             accumulatedText = text
-            NSLog("[OutloudInput] Replaced text, new length: \(text.count)")
+            NSLog("[RiftInput] Replaced text, new length: \(text.count)")
         } else {
             // Append mode: Just insert the new text at cursor
             client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
             accumulatedText += text
-            NSLog("[OutloudInput] Appended text: \(text)")
+            NSLog("[RiftInput] Appended text: \(text)")
         }
     }
     
     static func clearText() {
         accumulatedText = ""
-        NSLog("[OutloudInput] Cleared accumulated text")
+        NSLog("[RiftInput] Cleared accumulated text")
     }
     
     static func sendEnter() {
@@ -207,8 +207,6 @@ class OutloudInputController: IMKInputController {
             keyUp.post(tap: .cghidEventTap)
         }
         
-        NSLog("[OutloudInput] Sent Enter key")
+        NSLog("[RiftInput] Sent Enter key")
     }
 }
-
-

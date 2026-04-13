@@ -1,0 +1,198 @@
+{
+  "_meta": {
+    "version": "1.0.0",
+    "description": "Structured design-critic heuristics for the Rift marketing site. The agent MUST walk every P0 and P1 rule after taking screenshots; P2 rules are polish. Inspired by Vercel Labs web-design-guidelines (100+ rules) adapted for a single-page accessibility product.",
+    "severities": {
+      "P0": "Ship blocker — fix before any deploy or baseline refresh",
+      "P1": "Quality — fix in the same session if practical",
+      "P2": "Polish — log and fix next session"
+    }
+  },
+  "categories": [
+    {
+      "id": "layout-clipping",
+      "name": "Layout & Clipping",
+      "rules": [
+        { "id": "LC-01", "severity": "P0", "check": "No headline, logo, or CTA is clipped by the viewport edge, sticky nav, or parent overflow at any tested viewport." },
+        { "id": "LC-02", "severity": "P0", "check": "In-page anchor links (#download, #story, etc.) land with the section heading fully visible below the sticky nav — not hidden under it." },
+        { "id": "LC-03", "severity": "P0", "check": "No horizontal scroll at any viewport 320px and wider." },
+        { "id": "LC-04", "severity": "P1", "check": "Display-size headings (clamp ≥ 4rem) have enough line-height + padding that ascenders/descenders don't clip." },
+        { "id": "LC-05", "severity": "P1", "check": "Sections using overflow:hidden do not clip absolutely-positioned children that are meant to be visible." },
+        { "id": "LC-06", "severity": "P2", "check": "Gradient transitions between sections (::before/::after bleed) look intentional, not like rendering artefacts." }
+      ]
+    },
+    {
+      "id": "visual-hierarchy",
+      "name": "Visual Hierarchy",
+      "rules": [
+        { "id": "VH-01", "severity": "P0", "check": "Each section has exactly one focal point (headline OR hero visual OR primary CTA) that the eye reaches first." },
+        { "id": "VH-02", "severity": "P0", "check": "No more than 3 distinct visual weights per viewport (e.g. display / subhead / body)." },
+        { "id": "VH-03", "severity": "P1", "check": "Section h2/h3 are visually distinct from body text (≥ 1.5× font-size ratio for h2 vs body p)." },
+        { "id": "VH-04", "severity": "P1", "check": "Primary CTA stands out from secondary actions — different size, weight, or contrast treatment." },
+        { "id": "VH-05", "severity": "P1", "check": "Card grids have equal visual weight per card — no orphan/runt row (e.g. 3+1 at a breakpoint)." },
+        { "id": "VH-06", "severity": "P2", "check": "Badge / label text (research-badge, section-kicker) is clearly subordinate to headings, not competing." },
+        { "id": "VH-07", "severity": "P2", "check": "Sticky nav does not visually dominate the current section content — it is backdrop, not foreground." }
+      ]
+    },
+    {
+      "id": "whitespace",
+      "name": "Whitespace & Breathing Room",
+      "rules": [
+        { "id": "WS-01", "severity": "P0", "check": "Hero section: headline + subcopy are not cramped — combined vertical air (margin + padding + gap) is roughly ≥ 40% of viewport height on desktop." },
+        { "id": "WS-02", "severity": "P1", "check": "Section vertical padding never below ~24px between distinct content blocks at default font scale." },
+        { "id": "WS-03", "severity": "P1", "check": "Stacked text blocks (p + p, p + meta, heading + blurb) have at least 1× their line-height as vertical gap." },
+        { "id": "WS-04", "severity": "P1", "check": "Footer/meta stacks (build info, links, legal) are not a single undifferentiated wall of small grey text — they have distinct vertical rhythm or grouping." },
+        { "id": "WS-05", "severity": "P1", "check": "No section where text+UI fills > 85% of its visible bounding box with zero intentional air." },
+        { "id": "WS-06", "severity": "P2", "check": "Spacing between interactive elements (buttons, links) is consistent — no random tight/loose gaps." },
+        { "id": "WS-07", "severity": "P2", "check": "Nav link spacing is even — no visually unequal gaps between navigation items." }
+      ]
+    },
+    {
+      "id": "contrast-legibility",
+      "name": "Contrast & Legibility",
+      "rules": [
+        { "id": "CL-01", "severity": "P0", "check": "All body copy achieves ≥ 4.5:1 contrast ratio against its effective background in light and dark themes." },
+        { "id": "CL-02", "severity": "P0", "check": "In high-contrast theme, primary text achieves ≥ 7:1 where feasible." },
+        { "id": "CL-03", "severity": "P0", "check": "No primary reading text renders below 14px computed font-size at any viewport × font-scale combination." },
+        { "id": "CL-04", "severity": "P1", "check": "Secondary/meta text (build string, version, disclaimers) on dark backgrounds uses ≥ 0.5 alpha white, not ≤ 0.4." },
+        { "id": "CL-05", "severity": "P1", "check": "Text placed over images or gradients has an overlay, shadow, or guaranteed contrast treatment." },
+        { "id": "CL-06", "severity": "P1", "check": "Body copy line length stays ~45–75 characters on desktop (≥ 900px viewport). Use max-width on prose containers." },
+        { "id": "CL-07", "severity": "P1", "check": "Body copy line-height ≥ 1.4; heading line-height ≥ 1.1." },
+        { "id": "CL-08", "severity": "P2", "check": "Monospace / code-style text (inline-code, version strings) has adequate background or padding to separate from surrounding prose." }
+      ]
+    },
+    {
+      "id": "touch-interaction",
+      "name": "Touch Targets & Interaction",
+      "rules": [
+        { "id": "TI-01", "severity": "P0", "check": "All primary interactive elements (nav links, buttons, CTAs) have ≥ 44×44px tap/click area." },
+        { "id": "TI-02", "severity": "P0", "check": "Footer links have ≥ 44px hit height (padding counts)." },
+        { "id": "TI-03", "severity": "P1", "check": "Range inputs (sliders) have visible thumb ≥ 44×44px or the track itself is tall enough to tap." },
+        { "id": "TI-04", "severity": "P1", "check": "Adjacent interactive elements have enough spacing that a fat-finger tap won't hit the wrong target." },
+        { "id": "TI-05", "severity": "P2", "check": "Hover-only states (tooltips, expanded cards) have a non-hover fallback on mobile." }
+      ]
+    },
+    {
+      "id": "nav-header",
+      "name": "Navigation & Header",
+      "rules": [
+        { "id": "NH-01", "severity": "P0", "check": "Sticky nav is readable and not transparent on scroll — background has sufficient opacity + blur." },
+        { "id": "NH-02", "severity": "P1", "check": "Nav links do not crowd or wrap at 1024px (iPad landscape). On mobile (≤ 768px), non-essential links are hidden." },
+        { "id": "NH-03", "severity": "P1", "check": "Nav CTA (Download) is visually distinct from text links — different background, pill shape, or weight." },
+        { "id": "NH-04", "severity": "P1", "check": "Logo + nav are vertically centered; logo is not visually misaligned with link baselines." },
+        { "id": "NH-05", "severity": "P1", "check": "Accessibility panel (Aa disclosure) does not break nav layout when opened." },
+        { "id": "NH-06", "severity": "P2", "check": "Dark-mode nav background is distinct from section backgrounds below — no 'floating header' illusion." }
+      ]
+    },
+    {
+      "id": "typography",
+      "name": "Typography",
+      "rules": [
+        { "id": "TY-01", "severity": "P0", "check": "Webfont (Plus Jakarta Sans) loads before or with graceful fallback — no FOUT that shifts layout." },
+        { "id": "TY-02", "severity": "P1", "check": "Heading sizes use a consistent scale (--text-lg, --text-xl, --text-2xl, --text-3xl) — not ad-hoc pixel values." },
+        { "id": "TY-03", "severity": "P1", "check": "All text respects --font-scale CSS variable — no elements with hard-coded px that ignore user scaling." },
+        { "id": "TY-04", "severity": "P1", "check": "Letter-spacing on display type is slightly negative (-0.02em to -0.05em); body uses default or slight positive." },
+        { "id": "TY-05", "severity": "P2", "check": "Numbers in stats / metrics use tabular-nums or monospace so columns align." },
+        { "id": "TY-06", "severity": "P2", "check": "No orphan words at the end of headlines at common viewports (fix with <br> or max-width)." }
+      ]
+    },
+    {
+      "id": "color-theme",
+      "name": "Color & Theming",
+      "rules": [
+        { "id": "CT-01", "severity": "P0", "check": "All three themes (light, dark, high-contrast) render without broken colors — no white-on-white or black-on-black." },
+        { "id": "CT-02", "severity": "P1", "check": "Accent color (--accent) is used in ≤ 3 roles across the page (badges, links, focus rings) — not everywhere." },
+        { "id": "CT-03", "severity": "P1", "check": "Dark sections (passage, download) use --void consistently; transitions between light and dark sections use gradients or clean edges." },
+        { "id": "CT-04", "severity": "P1", "check": "Interactive states (hover, active, focus) are visible in all three themes — not just light." },
+        { "id": "CT-05", "severity": "P2", "check": "Theme toggle updates instantly — no flash of wrong theme on page load (localStorage is read synchronously)." }
+      ]
+    },
+    {
+      "id": "motion-animation",
+      "name": "Motion & Animation",
+      "rules": [
+        { "id": "MA-01", "severity": "P0", "check": "prefers-reduced-motion media query disables all non-essential animations (reveal, hero letter, tagline)." },
+        { "id": "MA-02", "severity": "P0", "check": "Reveal animations don't make content unreachable — section headings and lead text should not be gated behind .reveal if the section would render as a large blank area without them. Scrolling to the section must never show an empty white/dark rectangle." },
+        { "id": "MA-03", "severity": "P1", "check": "Animations are short (≤ 1s for transitions, ≤ 2s for reveals) — nothing feels sluggish or disorienting." },
+        { "id": "MA-04", "severity": "P2", "check": "Scroll-triggered reveals use IntersectionObserver, not scroll event listeners — no jank." },
+        { "id": "MA-05", "severity": "P2", "check": "Looping animations (waveform, typing demo) don't drain battery — use will-change sparingly and pause when off-screen." },
+        { "id": "MA-06", "severity": "P0", "check": "Animated demos (typing, autofix) render correctly in their FINAL state — wait for the full animation to complete and verify no text overflow, missing words, or broken layout. Shared CSS class names between demos (e.g. .demo-wrong, .demo-correct) must not conflict via global rules leaking position/opacity/animation into unrelated sections." }
+      ]
+    },
+    {
+      "id": "focus-keyboard",
+      "name": "Focus & Keyboard Navigation",
+      "rules": [
+        { "id": "FK-01", "severity": "P0", "check": "All interactive elements are reachable by Tab key in logical order." },
+        { "id": "FK-02", "severity": "P0", "check": ":focus-visible outline is visible in all themes — uses --accent with sufficient contrast." },
+        { "id": "FK-03", "severity": "P1", "check": "Skip-to-content link exists or first Tab stop is the primary nav." },
+        { "id": "FK-04", "severity": "P1", "check": "Details/summary (accessibility panel) can be opened/closed with Enter and Space." },
+        { "id": "FK-05", "severity": "P2", "check": "Focus order within the accessibility panel follows visual order (font buttons → theme buttons)." }
+      ]
+    },
+    {
+      "id": "images-media",
+      "name": "Images & Media",
+      "rules": [
+        { "id": "IM-01", "severity": "P0", "check": "Hero image / video poster loads and is visible — no broken image icon or empty space." },
+        { "id": "IM-02", "severity": "P1", "check": "Decorative images use aria-hidden='true' or empty alt; meaningful images have descriptive alt text." },
+        { "id": "IM-03", "severity": "P1", "check": "SVG icons in tech cards and arch diagrams have role='img' and accessible name where needed." },
+        { "id": "IM-04", "severity": "P2", "check": "Images are appropriately sized — no 4000px bitmap served at 400px display width." },
+        { "id": "IM-05", "severity": "P2", "check": "Poster/fallback image is visible if video doesn't autoplay (Safari, low-power mode)." }
+      ]
+    },
+    {
+      "id": "responsive",
+      "name": "Responsive Behaviour",
+      "rules": [
+        { "id": "RS-01", "severity": "P0", "check": "Page is usable at 320px width (iPhone SE) — no content cut off or overlapping." },
+        { "id": "RS-02", "severity": "P0", "check": "Page is usable at 2560px width (QHD) — content doesn't stretch wider than max-width constraints." },
+        { "id": "RS-03", "severity": "P1", "check": "Comparison table scrolls horizontally on mobile without breaking the page-level scroll." },
+        { "id": "RS-04", "severity": "P1", "check": "Tech quartet uses explicit breakpoints (4/2/1 columns) — not auto-fit that causes 3+1 orphan." },
+        { "id": "RS-05", "severity": "P1", "check": "Demo section (rift-demo-window) scales to fit viewport — no content overflow on small screens." },
+        { "id": "RS-06", "severity": "P2", "check": "Font scale controls (A−/A/A+) + theme buttons are reachable on mobile — Aa panel opens cleanly." }
+      ]
+    },
+    {
+      "id": "forms-inputs",
+      "name": "Forms & Inputs",
+      "rules": [
+        { "id": "FI-01", "severity": "P0", "check": "All range inputs (speed slider in demo) have associated labels (aria-label or aria-labelledby)." },
+        { "id": "FI-02", "severity": "P1", "check": "Buttons have type='button' to prevent accidental form submission." },
+        { "id": "FI-03", "severity": "P2", "check": "Custom styled inputs (sliders, toggles) match the theme's color tokens, not browser defaults." }
+      ]
+    },
+    {
+      "id": "performance",
+      "name": "Performance & Loading",
+      "rules": [
+        { "id": "PF-01", "severity": "P1", "check": "No render-blocking resources beyond the main CSS — fonts load async or with display:swap." },
+        { "id": "PF-02", "severity": "P1", "check": "Pretext vendor files load without 404s — all chunks (bidi.js, analysis.js, measurement.js, line-break.js) present." },
+        { "id": "PF-03", "severity": "P2", "check": "Largest Contentful Paint element is the hero heading or image, not a below-fold section." },
+        { "id": "PF-04", "severity": "P2", "check": "No layout shifts from late-loading content (CLS near 0)." }
+      ]
+    },
+    {
+      "id": "semantic-structure",
+      "name": "Semantic Structure",
+      "rules": [
+        { "id": "SS-01", "severity": "P0", "check": "Heading hierarchy is logical — h1 → h2 → h3 without skipping levels." },
+        { "id": "SS-02", "severity": "P1", "check": "Sections use <section> with aria-labelledby pointing to their heading id." },
+        { "id": "SS-03", "severity": "P1", "check": "Landmark regions (nav, main, footer) are present and unique." },
+        { "id": "SS-04", "severity": "P1", "check": "Live regions (aria-live on announcements, demo text) update correctly for screen readers." },
+        { "id": "SS-05", "severity": "P2", "check": "Schema.org structured data (@type SoftwareApplication) is valid JSON-LD." }
+      ]
+    },
+    {
+      "id": "content-composition",
+      "name": "Content Composition (vision-only)",
+      "rules": [
+        { "id": "CC-01", "severity": "P1", "check": "Above the fold answers 'what is this?' and 'why should I care?' within 3–5 seconds of visual scanning." },
+        { "id": "CC-02", "severity": "P1", "check": "Each modular section is self-contained (one idea, one CTA or takeaway) — sections don't bleed into each other conceptually." },
+        { "id": "CC-03", "severity": "P1", "check": "Trust signals (open source badge, GitHub link, build number) are visible but subordinate to the value proposition." },
+        { "id": "CC-04", "severity": "P2", "check": "Download section feels like a destination, not an afterthought — adequate visual weight and breathing room." },
+        { "id": "CC-05", "severity": "P2", "check": "Footer is clearly the end — no ambiguity about whether more content follows." }
+      ]
+    }
+  ]
+}

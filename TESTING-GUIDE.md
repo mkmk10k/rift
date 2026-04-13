@@ -1,4 +1,4 @@
-# Testing Guide - Outloud Electron
+# Testing Guide - Rift
 
 ## What Was Fixed
 
@@ -126,7 +126,7 @@ Based on your feedback:
 ### If Settings Don't Resize:
 1. Open browser DevTools (if enabled in dev mode)
 2. Check console for errors
-3. Verify `window.outloud.window.resize` exists
+3. Verify `window.rift.window.resize` exists
 
 ### If Audio Doesn't Play:
 1. Check console for "Audio playing: file://..." message

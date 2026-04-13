@@ -1,6 +1,6 @@
 /**
  * Model Download Service
- * 
+ *
  * Manages first-run model downloads with progress tracking.
  * Spawns Python script and parses JSON progress events.
  */
@@ -11,23 +11,23 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { app } from 'electron';
 import { getSetting, setSetting } from './settings';
+import { normalizePythonDownloadEvent, type DownloadEvent } from './modelDownloadParsing';
+
+export type { DownloadEvent } from './modelDownloadParsing';
+export type { DownloadEventType } from './modelDownloadParsing';
+
+export interface DownloadModelsOptions {
+  /** TTS + STT + fast LLM only (~1.1 GB); Gemma downloaded separately in background */
+  coreOnly?: boolean;
+  /** Download a single model by Python id (e.g. LLM_DEEP) */
+  onlyModelId?: string;
+}
 
 export interface DownloadProgress {
   model: string;
   name: string;
   downloadedMb: number;
   totalMb: number;
-}
-
-export interface DownloadEvent {
-  type: 'init' | 'start' | 'progress' | 'complete' | 'cached' | 'error' | 'all_complete' | 'partial_complete';
-  model?: string;
-  name?: string;
-  downloadedMb?: number;
-  totalMb?: number;
-  sizeMb?: number;
-  totalModels?: number;
-  error?: string;
 }
 
 class ModelDownloadService extends EventEmitter {
@@ -76,8 +76,7 @@ class ModelDownloadService extends EventEmitter {
       console.error('[ModelDownload] Bundled Python not found');
       return null;
     } else {
-      // Development: check for local bundle first
-      const devBundlePath = path.join(__dirname, '../../../../python-bundle/bin/python3.11');
+      const devBundlePath = path.join(app.getAppPath(), 'python-bundle', 'bin', 'python3.11');
       if (fs.existsSync(devBundlePath)) {
         return devBundlePath;
       }
@@ -97,7 +96,7 @@ class ModelDownloadService extends EventEmitter {
     if (app.isPackaged) {
       return path.join(process.resourcesPath, 'python', 'download_models.py');
     } else {
-      return path.join(__dirname, '../../../../python/download_models.py');
+      return path.join(app.getAppPath(), 'python', 'download_models.py');
     }
   }
 
@@ -105,7 +104,7 @@ class ModelDownloadService extends EventEmitter {
    * Start downloading models
    * Returns a promise that resolves when all downloads complete
    */
-  async downloadModels(): Promise<boolean> {
+  async downloadModels(options?: DownloadModelsOptions): Promise<boolean> {
     if (this.isDownloading) {
       console.log('[ModelDownload] Download already in progress');
       return false;
@@ -125,15 +124,22 @@ class ModelDownloadService extends EventEmitter {
       return false;
     }
 
-    console.log('[ModelDownload] Starting model downloads...');
+    const spawnArgs = [scriptPath];
+    if (options?.onlyModelId) {
+      spawnArgs.push('--only', options.onlyModelId);
+    } else if (options?.coreOnly) {
+      spawnArgs.push('--core-only');
+    }
+
+    console.log('[ModelDownload] Starting model downloads...', options || {});
     console.log('[ModelDownload] Python:', pythonPath);
-    console.log('[ModelDownload] Script:', scriptPath);
+    console.log('[ModelDownload] Args:', spawnArgs);
 
     this.isDownloading = true;
     this.emit('start');
 
     return new Promise((resolve) => {
-      this.downloadProcess = spawn(pythonPath, [scriptPath], {
+      this.downloadProcess = spawn(pythonPath, spawnArgs, {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {
           ...process.env,
@@ -145,15 +151,15 @@ class ModelDownloadService extends EventEmitter {
 
       this.downloadProcess.stdout?.on('data', (data: Buffer) => {
         stdoutBuffer += data.toString();
-        
-        // Parse complete JSON lines
+
         const lines = stdoutBuffer.split('\n');
-        stdoutBuffer = lines.pop() || ''; // Keep incomplete line in buffer
-        
+        stdoutBuffer = lines.pop() || '';
+
         for (const line of lines) {
           if (line.trim()) {
             try {
-              const event = JSON.parse(line) as DownloadEvent;
+              const raw = JSON.parse(line) as Record<string, unknown>;
+              const event = normalizePythonDownloadEvent(raw);
               this.handleDownloadEvent(event);
             } catch (e) {
               console.log('[ModelDownload] Non-JSON output:', line);
@@ -163,7 +169,6 @@ class ModelDownloadService extends EventEmitter {
       });
 
       this.downloadProcess.stderr?.on('data', (data: Buffer) => {
-        // Log stderr but don't parse it (just debug info)
         console.log('[ModelDownload]', data.toString().trim());
       });
 
@@ -174,7 +179,11 @@ class ModelDownloadService extends EventEmitter {
         this.currentProgress = null;
 
         if (code === 0) {
-          this.markModelsDownloaded();
+          if (options?.onlyModelId === 'LLM_DEEP') {
+            setSetting('llmDeepDownloaded', true);
+          } else {
+            this.markModelsDownloaded();
+          }
           this.emit('complete');
           resolve(true);
         } else {
@@ -197,7 +206,7 @@ class ModelDownloadService extends EventEmitter {
    * Handle a download event from the Python script
    */
   private handleDownloadEvent(event: DownloadEvent): void {
-    console.log('[ModelDownload] Event:', event.type, event.model || '');
+    console.log('[ModelDownload] Event:', event.type, event.model || event.phase || '');
 
     switch (event.type) {
       case 'init':
@@ -210,7 +219,7 @@ class ModelDownloadService extends EventEmitter {
           model: event.model || '',
           name: event.name || '',
           downloadedMb: 0,
-          totalMb: event.sizeMb || 0,
+          totalMb: event.sizeMb || event.totalMb || 0,
         };
         this.emit('modelStart', this.currentProgress);
         break;
@@ -218,6 +227,9 @@ class ModelDownloadService extends EventEmitter {
       case 'progress':
         if (this.currentProgress) {
           this.currentProgress.downloadedMb = event.downloadedMb || 0;
+          if (event.totalMb) {
+            this.currentProgress.totalMb = event.totalMb;
+          }
           this.emit('progress', this.currentProgress);
         }
         break;
@@ -238,6 +250,17 @@ class ModelDownloadService extends EventEmitter {
 
       case 'partial_complete':
         this.emit('partialComplete', { error: event.error });
+        break;
+
+      case 'phase':
+        this.emit('phase', {
+          phase: event.phase || '',
+          package: event.package,
+          detail: event.detail,
+        });
+        break;
+
+      default:
         break;
     }
   }

@@ -1,0 +1,726 @@
+---
+description: Guidelines for autonomous self-improvement when building rift-app
+globs: rift-app/**/*
+alwaysApply: true
+---
+
+# Agent Autonomy Guidelines for Rift App
+
+## Core Principle: Autonomous Operation
+
+**NEVER ask the user to manually test. ALWAYS run tests autonomously using the E2E test engine.**
+
+The goal is self-improving, autonomous development where the agent:
+1. Runs tests before/after changes WITHOUT human involvement
+2. Incrementally evolves the test engine with each feature
+3. Manages memory carefully on Apple Silicon
+4. Tracks progress over time via evals.json
+
+---
+
+## Skills Reference
+
+Skills are reusable workflows in `.cursor/skills/`. Use them by name:
+
+| Skill | When to Use |
+|-------|-------------|
+| `cleanup-processes` | Before `bun run dev` or after errors |
+| `run-evals` | Before release, after changes |
+| `release` | Publishing new version (gated by evals) |
+| `session-start` | Start of every session |
+| `analyze-trends` | Check quality over time |
+| `evolve-tests` | After failures indicate coverage gaps |
+| `fresh-install-test` | Before major releases |
+| `sync-public-repo` | Updating public mkmk10k/rift |
+| `feature-complete` | After finishing a feature |
+| `design-audit` | Gate 0 before pixel diff — design principles + `bun run design:audit` |
+| `website-qa` | Gates 0–2 before `deploy:website`, after `website/` changes |
+
+## Website design ownership
+
+- The agent acts as **design owner** for `website/`, not only a pixel-diff checker. Baselines prove *unchanged*; `.cursor/rules/design-principles.mdc` defines *good* (hierarchy, legibility, touch targets, consistency, motion).
+- After **any** substantive `website/` HTML/CSS change, run **`design-audit`** (Gate 0) via `bun run design:audit` **before** `bun run test:website` and Lighthouse. Fix issues autonomously when safe (layout/CSS); do not rewrite marketing copy without the user.
+- **Track:** append `design-audit` results to `test-engine/history.jsonl` (handled by `scripts/design-audit.sh`). Prefer fixing root causes over weakening checks.
+
+**Evals = Success Metrics.** Product quality is measured by evals:
+- llm-runner > 70%
+- e2e-paste-test = 100%
+- installer-tests = 100%
+- Kokoro TTFA < 500ms
+
+---
+
+## Repository Structure (CRITICAL - DO NOT CONFUSE)
+
+There are **TWO separate Git repositories**:
+
+### 1. mkmk10k/playground (INTERNAL)
+- **Location**: `/Users/mikkokiiskila/Code/playground/rift-app/`
+- **Purpose**: Development monorepo with full tooling
+- **Contains**: Release scripts, version automation, bundling tools, cursor rules
+- **Used for**: Building DMGs, publishing releases, day-to-day development
+
+### 2. mkmk10k/rift (PUBLIC)
+- **URL**: https://github.com/mkmk10k/rift
+- **Purpose**: Open source repo for external developers
+- **Contains**: Clean buildable source, full prompts, test engine
+- **Excludes**: Release automation (`release.js`, `bundle-python.js`, `updateService.ts`)
+- **Synced manually** when public-facing changes are ready
+
+### Sync Workflow
+When syncing to public repo:
+1. Clone `mkmk10k/rift` to temp folder
+2. Copy files from `rift-app/`, excluding internal scripts
+3. Ensure `prompts.json` has full prompts (not just example)
+4. Remove `updateService.ts` (users build from source)
+5. Commit and push to `mkmk10k/rift`
+
+### Which Repo for What?
+| Task | Repository |
+|------|-----------|
+| Building DMG releases | playground (internal) |
+| `bun run release` | playground (internal) |
+| GitHub Releases uploads | mkmk10k/rift (public) |
+| External developer cloning | mkmk10k/rift (public) |
+| Update checking in app | mkmk10k/rift releases |
+| Cursor rules, agent config | playground (internal only) |
+
+---
+
+## At Session Start
+
+1. Read `ISSUES.md` to understand current bugs
+2. Read `DECISIONS.md` to understand past architectural decisions
+3. Check `test-engine/history.jsonl` for recent eval trends
+4. **Check if app is already running** (see Process Management section below)
+
+---
+
+## Process Management (CRITICAL - PREVENTS DUPLICATE APPS)
+
+**Use the `cleanup-processes` skill before any `bun run dev`.**
+
+See `.cursor/skills/cleanup-processes.md` for full details.
+
+### Why This Matters
+
+1. **Electron doesn't single-instance by default** in dev mode
+2. Each `bun run dev` spawns: Electron + Vite + 3 Python servers
+3. Multiple instances = **~3-5GB RAM each** = system slowdown/freeze
+4. User sees multiple tray icons, confusing UX
+5. GPU/Metal contention between instances degrades performance
+
+### Signs You Have Duplicate Processes
+
+- Multiple Rift icons in system tray
+- System becoming slow/unresponsive  
+- User reports "my computer is very slow"
+- Memory usage climbing unexpectedly
+- TTS/STT performance degrading (GPU contention)
+
+## Self-Improvement Loop (ALWAYS FOLLOW)
+
+When making changes to LLM/STT/TTS functionality:
+
+1. **Run `run-evals` skill** (before changes) - establishes baseline
+2. **Make changes** - implement the fix or feature
+3. **Run `run-evals` skill** (after changes) - compare to baseline
+4. **Run `analyze-trends` skill** - check for regressions
+5. **Run `feature-complete` skill** - update docs if feature done
+
+**Release gate:** Evals must pass thresholds before release.
+
+## Incrementally Evolving the Test Engine
+
+When tests fail or coverage gaps found, use `evolve-tests` skill.
+
+Key files:
+- `test-engine/llm-scenarios.ts` - LLM polish tests
+- `test-engine/tts-transform-scenarios.ts` - TTS transform tests
+- `test-engine/e2e-paste-test.ts` - E2E pipeline tests
+- `test-engine/evals.json` - Baselines, thresholds, learnings
+
+## Memory Management (CRITICAL on Apple Silicon)
+
+### Model Loading Strategy
+- **Fast (0.6B)**: Always loaded for real-time ops (~400MB)
+- **Intelligence (4B)**: Loaded for polish, swaps out Quality model (~2.5GB)
+- **Total safe limit**: ~3GB for 8GB Macs
+
+### Before Loading Large Models
+```python
+# In llm_server.py
+if model_to_load == "deep":
+    unload_quality_model()  # Free memory first
+    gc.collect()
+    mx.metal.clear_cache()
+```
+
+### In Test Engine
+- Run tests sequentially, not in parallel
+- Add warmup request before tests to force model loading
+- Use 2-minute timeouts for 4B model operations
+
+## When Debugging Silence Polish / Final Polish
+
+1. Check terminal logs for `[Silence Polish]` and `[Phase 4]` entries
+2. Look for `ratio=X.XX` in polish logs - ratio near 1.0 means no changes made
+3. Check for `/no_think` in output (prompt artifact leak)
+4. Verify word count: list formatting should reduce words by ~30-50%
+
+## Quality Gates
+
+- **Never commit if evals regress >5% from baseline**
+- Always check for `/no_think` artifacts after polish changes
+- Verify list detection tests pass after prompt changes
+- Check memory usage on 8GB Mac scenarios
+- E2E tests must pass before declaring feature complete
+
+## Test Capture for Debugging
+
+If need to debug paste flow in running app:
+```javascript
+// In DevTools console
+await window.rift.testCapture.startCapture()
+// ... do operations ...
+const result = await window.rift.testCapture.stopCapture()
+console.log(result.summary.duplicateCount) // Should be 0
+```
+
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `python/llm_server.py` | LLM prompts and model loading |
+| `src/main/services/llmService.ts` | Silence detection and polish orchestration |
+| `src/renderer/App.tsx` | Frontend state management |
+| `test-engine/llm-scenarios.ts` | LLM unit test scenarios |
+| `test-engine/llm-runner.ts` | LLM unit test runner |
+| `test-engine/e2e-paste-test.ts` | Autonomous E2E tests (TTS→STT→LLM) |
+| `test-engine/history.jsonl` | Progress tracking over time |
+| `ISSUES.md` | Current bugs and status |
+| `DECISIONS.md` | Architecture decisions |
+
+## Learnings from 2026-01-19 Session (Chatterbox MLX & Process Management)
+
+### What Went Wrong: Duplicate App Instances
+
+**Failure:** Started `bun run dev` multiple times without killing existing processes, causing:
+- Multiple Rift apps running simultaneously
+- ~3-5GB RAM per instance = system slowdown
+- User's computer became unresponsive
+- GPU contention degraded TTS performance
+
+**Root Cause Analysis:**
+1. Agent ran `bun run dev` to test changes
+2. Made code changes, ran `bun run dev` again (previous still running)
+3. Repeat 3-4 times → 4 Electron instances + 12 Python servers
+4. User noticed "two Rift apps" and slow computer
+5. Agent didn't proactively check/kill processes before each start
+
+**Lesson:** ALWAYS kill existing processes before starting dev server. Add to workflow checklist.
+
+### Chatterbox MLX Investigation Results
+
+| Model | RTF | Verdict |
+|-------|-----|---------|
+| PyTorch Chatterbox | 0.05x | ❌ 20x slower than realtime |
+| Chatterbox Turbo MLX | N/A | ❌ Produces noise (mlx_audio bug) |
+| Chatterbox Full MLX | 0.8x | ⚠️ Slightly slower than realtime |
+| **Kokoro MLX** | **8x** | ✅ **Best for screen reading** |
+
+**Key Findings:**
+1. `mlx_audio` library has bug: `from_pretrained` doesn't call `post_load_hook`
+2. Chatterbox Turbo MLX has fundamental code bugs (not weight issues)
+3. Chatterbox Full MLX works but 10x slower than Kokoro
+4. For production screen reading, Kokoro remains the best choice
+
+**Files Created:**
+- `python/tts_server.py` - Added `chatterbox-full-mlx` backend
+- `models/chatterbox-full-mlx/` - Pre-computed model with voice conditionals
+- `src/main/index.ts` - Added TTS Model menu option
+
+### What Worked
+1. **Systematic hypothesis testing** in debug mode with instrumentation
+2. **Log-based evidence** to confirm/reject hypotheses
+3. **Comparative benchmarking** across all TTS options
+4. **Clear documentation** of tradeoffs for user decision
+
+### What to Do Differently Next Time
+1. **Check processes BEFORE every `bun run dev`** - add to muscle memory
+2. **Monitor system resources** when running tests
+3. **Warn user proactively** if detecting performance degradation
+4. **Single test process** - don't start app multiple times for iterative testing
+
+---
+
+## Learnings from 2026-01-04 Session (Code Talk Feature)
+
+### What Worked
+1. **Test-First Development** - 45 test scenarios before implementation
+2. **Few-Shot Prompting for TTS** - 30+ examples in prompts.json
+3. **Pure Function for Context Detection** - `detectSpeechMode()` testable without AppleScript
+4. **4B Model for Complex Transforms** - Smaller models can't follow complex instructions
+
+### What Failed Before Fixing  
+1. **1.7B model crashed tests** - Loading quality model interfered with other tests
+2. **Strict test constraints** - Initial tests too strict on emoji removal
+3. **Latency thresholds too low** - 4B model takes 6-8s, increased to 12s
+
+### Code Talk Model Performance
+| Content Type | 4B Quality | Notes |
+|--------------|------------|-------|
+| CSS properties | Excellent | "set to" pattern works |
+| File paths | Good | Speaks folder separators |
+| Markdown tables | Good | Row-by-row description |
+| Mermaid diagrams | OK | Basic flow description |
+
+### Key Files Added
+- `src/main/ipc/context-detection.ts` - Pure mode detection
+- `test-engine/tts-transform-scenarios.ts` - 45 TTS test scenarios  
+- `python/prompts.json` - Added `TTS_TRANSFORM_PROMPTS`
+
+---
+
+## Learnings from 2026-01-02 Session
+
+### What Worked
+1. **2-model architecture**: Fast (0.6B) + Intelligence (4B) is optimal
+2. **BE-driven silence detection**: Single source of truth, no race conditions
+3. **E2E test engine**: TTS→STT→LLM loop enables fully autonomous testing
+4. **Warmup requests**: Force model loading before tests to avoid sync issues
+5. **history.jsonl**: Lightweight tracking enables progress measurement
+
+### What Failed Before Fixing
+1. **1.7B model couldn't format lists** - too small for complex instructions
+2. **Response sync issues** - needed warmup to force 4B model loading
+3. **FE silence detection race conditions** - consolidated to BE
+4. **Test ratio bounds too strict** - adjusted for list formatting
+
+### Model Performance Data
+| Model | Size | Latency | Quality |
+|-------|------|---------|---------|
+| Qwen3-0.6B | ~400MB | ~200ms | OK for merge/extract |
+| Qwen3-1.7B | ~1GB | ~1300ms | Fails list formatting |
+| Qwen3-4B | ~2.5GB | ~3500ms | Excellent list formatting |
+
+### Validated Test Results
+- LLM unit tests: 68.2% pass rate (up from 63.6% baseline)
+- List detection: 100% (4/4 tests pass)
+- E2E autonomous: 100% (3/3 tests pass)
+
+## When Stuck
+
+1. Check `ISSUES.md` for related problems
+2. Check `DECISIONS.md` for past solutions
+3. Run targeted evals to diagnose
+4. Search codebase for similar patterns
+5. **Run E2E tests to verify actual behavior**
+6. If still stuck, ask user with specific question and context
+
+## Session Finalization
+
+After completing a feature, use the `feature-complete` skill.
+
+See `.cursor/skills/feature-complete.md` for the full workflow.
+
+## NEVER DO
+
+- ❌ Ask user to manually test - use E2E engine instead
+- ❌ Load multiple large models (4B+) simultaneously
+- ❌ Skip running evals before/after changes
+- ❌ Ignore evals.json trends
+- ❌ Create documentation files unless technically necessary
+- ❌ Guess at model behavior - verify with tests
+- ❌ Skip updating DECISIONS.md after significant changes
+- ❌ **Start dev server without running `cleanup-processes` skill first**
+- ❌ **Release without evals passing thresholds**
+
+---
+
+## Self-Improving Rules
+
+After significant changes, add learnings to:
+1. `test-engine/evals.json` - learnings array
+2. This rules file - Learnings sections below
+
+The goal is for this rules file to become more comprehensive with each build, making the agent more autonomous over time.
+
+---
+
+## Publishing Releases
+
+Use the `release` skill. **Releases are gated by evals passing.**
+
+See `.cursor/skills/release.md` for the full workflow.
+
+Quick version: Evals must pass → `bun run package` → `gh release create` → Update website
+
+---
+
+## Learnings from 2026-01-04 Session (Automated Release System)
+
+### What Was Built
+1. **Check for Updates** - Menu item in tray that checks GitHub Releases API
+2. **One-Command Release** - `bun run release` does build, checksum, changelog, publish, verify
+3. **Dry-run mode** - `bun run release:dry` previews without publishing
+
+### Key Implementation Details
+- GitHub repo is `mkmk10k/rift` (not mikkokiiskila/rift)
+- electron-builder normalizes versions: `2026.01.04+hash` → `2026.1.4`
+- gh CLI requires `workflow` scope for creating releases
+- Release script finds DMG by normalized version pattern
+
+### Files Added/Modified
+- `src/main/services/updateService.ts` - Check for Updates feature
+- `scripts/release.js` - Full release automation
+- `src/main/index.ts` - Added menu item
+- Website links updated to point to mkmk10k/rift
+
+### Prerequisites for Release
+```bash
+brew install gh
+gh auth login
+gh auth refresh -h github.com -s workflow  # If needed
+```
+
+---
+
+## Learnings from 2026-01-18 Session (Installer & First-Launch Flow)
+
+### Critical: Packaged App Code Signing (macOS 15+)
+
+**Problem:** Unsigned Electron 40 apps fail silently on macOS 15+ with "Launchd job spawn failed"
+
+**Symptoms:**
+- App process starts but immediately exits with code 0
+- No console output, no crash logs
+- `spctl --assess` returns: "code has no resources but signature indicates they must be present"
+- Process shows "SN" (suspended) status briefly before terminating
+
+**Solutions:**
+1. **For Distribution:** Get Apple Developer certificate ($99/year) and sign properly
+2. **For Development/Testing:** Set `identity: null` in electron-builder to skip signing:
+   ```json
+   "mac": {
+     "identity": null,
+     "hardenedRuntime": false
+   }
+   ```
+
+**Key Insight:** Development mode (`./node_modules/.bin/electron .`) works fine - only packaged apps have this issue.
+
+### electron-store Storage Locations (CRITICAL for Testing)
+
+**Development mode:** `~/Library/Preferences/electron-store-nodejs/config.json`
+**Production mode:** `~/Library/Application Support/rift/rift-settings.json`
+
+**For true fresh install testing, MUST clean BOTH:**
+```bash
+rm -rf ~/Library/Application\ Support/rift/
+rm -rf ~/Library/Preferences/electron-store-nodejs/
+```
+
+**Common Bug:** App skips setup wizard because old `setupComplete: true` persists in dev-mode store location even after cleaning production location.
+
+### First-Launch Detection Flow
+
+**Correct Implementation (in `src/main/index.ts`):**
+```typescript
+const isFirstLaunch = !getSetting('setupComplete');
+if (isFirstLaunch || forceSetup) {
+  openSetupWindow();
+}
+```
+
+**Key Rules:**
+1. `pythonSetup.ts` should ONLY verify Python works - NOT set `setupComplete`
+2. Setup wizard sets `setupComplete: true` via `setup:finish-and-launch` IPC
+3. Check happens AFTER `registerIpcHandlers()` so TTS server is available for voice preview
+
+### TTS Server Mock Torch Module
+
+**Problem:** `mlx_audio` imports `torch` even though it doesn't use it on Apple Silicon MLX
+
+**Solution:** Create mock torch module in `tts_server.py` using `MetaPathFinder`:
+```python
+class TorchMockFinder(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path, target=None):
+        if fullname == 'torch' or fullname.startswith('torch.'):
+            return importlib.machinery.ModuleSpec(fullname, TorchMockLoader())
+        return None
+```
+
+**Location:** `python/tts_server.py` lines 50-130
+
+### Fresh Install Test Checklist
+
+Before claiming installer is "production-grade", verify:
+- [ ] All model caches deleted (`~/.cache/huggingface/hub/models--*`)
+- [ ] All app settings deleted (both dev and prod locations)
+- [ ] Python bundle packages deleted and rebuilt
+- [ ] App shows setup wizard on first launch
+- [ ] Model downloads complete with progress indication
+- [ ] Voice preview plays audio in setup wizard
+- [ ] TTS/STT/LLM servers start successfully
+- [ ] Main widget appears after setup completion
+
+### Key Files Modified
+- `src/main/index.ts` - First-launch detection logic
+- `src/main/setup/pythonSetup.ts` - Removed premature `setupComplete` setting
+- `python/tts_server.py` - Mock torch module, dependency management
+- `python/stt_server.py` - Runtime dependency safety net
+- `scripts/bundle-python.js` - Preserve librosa registry.txt
+- `package.json` - Added `identity: null` for code signing
+
+---
+
+## Learnings from 2026-01-18 Session (Voice Preview Fix - Part 2)
+
+### Critical: PyTorch-Dependent Spacy Extensions Break Mock Torch
+
+**Problem:** Voice preview fails with `__mro_entries__ must return a tuple` error
+
+**Root Cause:** `spacy-curated-transformers` is installed as a transitive dependency of `spacy`, and it tries to inherit from `torch.nn.Module`. When our mock torch module is used as a base class, Python's MRO (Method Resolution Order) system fails.
+
+**Error Trace:**
+```
+curated_transformers/models/activations.py
+  class GeluNew(Module):  # Module is MockObject
+TypeError: __mro_entries__ must return a tuple
+```
+
+**Solution (Two Parts):**
+
+1. **Add `__mro_entries__` to MockObject:**
+```python
+class MockObject:
+    def __mro_entries__(self, bases):
+        # Required for when MockObject is used as a base class (PEP 560)
+        return (object,)
+```
+
+2. **Remove PyTorch-dependent packages from bundle:**
+```javascript
+// In bundle-python.js
+function removePyTorchDependentPackages(pythonPath) {
+  const packagesToRemove = [
+    'spacy-curated-transformers',
+    'curated-transformers',
+  ];
+  // Uninstall each after main package install
+}
+```
+
+**Why This Is Production-Safe:**
+- `spacy-curated-transformers` is an OPTIONAL spacy extension for transformer models
+- Basic spacy NLP features (used by misaki G2P) work fine without it
+- The bundle script now explicitly removes these packages after installation
+
+### TTS Server Model Loading Sequence
+
+**Correct Sequence (verified):**
+```
+[TTS Server] Server ready           <- isReady = true
+[TTS Server] Loading model...
+[TTS Server] Model loaded!          <- model files downloaded
+[TTS Server] Pre-loading voice...
+[TTS Server] Warming up Neural Engine...
+[TTS Server] Warmup complete        <- modelLoaded = true
+```
+
+**Key Insight:** `model_loaded` JSON message must be sent AFTER `KokoroPipeline()` succeeds, not just after `load_model()`.
+
+### UX Improvement: Auto-Play First Voice
+
+When navigating to voice selection screen, auto-play the first voice after 500ms delay:
+```javascript
+if (stageId === 'voice') {
+  setTimeout(() => {
+    const firstVoice = document.querySelector('#voice-list .voice-row');
+    if (firstVoice) selectVoice(firstVoice.dataset.voice, firstVoice);
+  }, 500);
+}
+```
+
+### Files Modified
+- `python/tts_server.py` - Added `__mro_entries__` to MockObject
+- `scripts/bundle-python.js` - Added `removePyTorchDependentPackages()` and `downloadSpacyModel()`
+- `setup/setup.html` - Added auto-play first voice on screen load
+
+### Debug Methodology That Worked
+
+1. **Hypothesis-driven debugging** - Generated 5 hypotheses for why voice preview failed
+2. **File-based logging in Python** - Used direct file writes instead of HTTP for Python instrumentation
+3. **Root cause tracing** - Traced from IPC handler → TTS server → Python model loading → exact exception
+
+---
+
+## Learnings from 2026-01-19 Session (Production Installer Fixes)
+
+### Critical: Python Bundle Path in extraResources
+
+**Problem:** After packaging, app shows "Required components are missing - bundled Python runtime was not found"
+
+**Root Cause:** Mismatch between code path and extraResources destination:
+- Code expected: `process.resourcesPath + '/python/bin/python3.11'`
+- extraResources copied: `python-bundle` → `python-bundle` (wrong!)
+
+**Solution:** In `package.json` extraResources, copy `python-bundle` to `python`:
+```json
+"extraResources": [
+  {
+    "from": "python-bundle",
+    "to": "python",  // NOT "python-bundle"!
+    "filter": ["**/*"]
+  }
+]
+```
+
+### Critical: Setup HTML Path in Packaged App
+
+**Problem:** Setup wizard window opens but shows blank/empty content
+
+**Root Cause:** `app.getAppPath()` returns the `.asar` path in production, but setup.html is in extraResources (outside asar).
+- Code used: `path.join(app.getAppPath(), 'setup', 'setup.html')`
+- This resolved to: `app.asar/setup/setup.html` (doesn't exist!)
+- Actual location: `Resources/setup/setup.html`
+
+**Solution:** Use `process.resourcesPath` for extraResources in production:
+```typescript
+const setupPath = app.isPackaged 
+  ? path.join(process.resourcesPath, 'setup', 'setup.html')
+  : path.join(app.getAppPath(), 'setup', 'setup.html');
+```
+
+### Critical: macOS Accessibility Permission Caching
+
+**Problem:** After enabling Rift in System Settings, app still shows "Not yet enabled" and clicking "Check Again" doesn't work
+
+**Root Cause:** macOS caches accessibility trust status. After reinstalling/updating an app, even if it's enabled in System Settings, `systemPreferences.isTrustedAccessibilityClient()` returns `false` until app restart.
+
+**Solution:** Add "Restart Rift" button after 2 failed permission checks:
+```javascript
+if (checkCount >= 2) {
+  subtitle.innerHTML = 'Permission may require app restart';
+  addRestartButton(btn);  // Calls app.relaunch() + app.exit(0)
+}
+```
+
+### Key Path Differences in Electron
+
+| Context | `app.getAppPath()` | `process.resourcesPath` |
+|---------|-------------------|------------------------|
+| Development | Project root | Electron resources |
+| Production | `Resources/app.asar` | `Resources/` |
+| **Use for** | Code/assets IN asar | extraResources OUTSIDE asar |
+
+### Files Modified
+- `package.json` - Fixed extraResources `python-bundle` → `python`
+- `src/main/windows/setup.ts` - Fixed setup.html path, added restart IPC
+- `src/preload/setupPreload.ts` - Added `restartApp` API
+- `setup/setup.html` - Added restart button after permission check fails
+
+### Debug Methodology That Worked
+
+1. **Instrumentation via HTTP fetch** - Added debug logs that POST to local server
+2. **Hypothesis testing** - Generated specific hypotheses (H1-H8) for each potential failure
+
+---
+
+## Learnings from 2026-01-19 Session (Chatterbox TTS Integration)
+
+### Multi-Model TTS Architecture
+
+**Pattern:** Single TTS server supporting multiple backends with runtime switching.
+
+**Key design decisions:**
+1. **Memory-based auto-restart** for Chatterbox (known memory leak ~500MB growth threshold)
+2. **Dynamic voice lists** that change based on selected model
+3. **On-demand model download** via setup window reuse
+4. **Fallback to Kokoro** if Chatterbox fails
+
+### Files Modified for Multi-Model TTS
+
+- `python/tts_server.py` - Added Chatterbox backend, memory monitoring, model switching
+- `src/main/ipc/handlers.ts` - Added `switchModel()`, `getVoices()`, restart signal handling
+- `src/main/index.ts` - Added TTS Model and Voice submenus to tray
+- `src/main/services/settings.ts` - Added `ttsModel`, `ttsVoiceKokoro`, `ttsVoiceChatterbox`
+- `src/main/windows/setup.ts` - Added download mode for on-demand model downloads
+- `python/download_models.py` - Added `--chatterbox` flag for on-demand download
+- `test-engine/installer-tests.ts` - Added `--chatterbox` tests
+
+### Chatterbox Memory Leak Mitigation
+
+**Problem:** Chatterbox has known memory leak (~200-800MB per generation batch)
+
+**Solution:** Monitor process memory via psutil and signal TypeScript when restart needed:
+```python
+def check_memory_and_signal():
+    if CURRENT_MODEL == "chatterbox" and BASELINE_MEMORY_MB:
+        growth = get_memory_mb() - BASELINE_MEMORY_MB
+        if growth > 500:  # 500MB threshold
+            print(json.dumps({"type": "restart_needed", "reason": "memory_optimization"}))
+```
+
+**UX:** Show "Optimizing Chatterbox memory..." briefly during restart (~2-3s)
+
+### Test-Driven Feature Development
+
+**Pattern:** Add tests for new features in installer-tests.ts to prevent regression.
+
+```bash
+npx ts-node test-engine/installer-tests.ts --chatterbox  # Chatterbox-specific
+npx ts-node test-engine/installer-tests.ts --all         # All including Chatterbox
+```
+
+Tests added:
+1. **Bundle integrity** - Verify `mlx_audio.tts.models.chatterbox_turbo` exists
+2. **Model status** - Verify TTS server reports model status correctly
+
+### On-Demand Model Download Pattern
+
+**Flow:**
+1. User selects Chatterbox in tray menu
+2. Check `getSetting('chatterboxDownloaded')`
+3. If false → Open setup window with `mode: 'download'`, `downloadModel: 'chatterbox'`
+4. Download via `download_models.py --chatterbox`
+5. On complete → Set `chatterboxDownloaded: true`, switch TTS model
+
+### Setup Window Reuse for Downloads
+
+Pass mode via query params when loading setup.html:
+```typescript
+setupWindow.loadFile(setupPath, { 
+  query: { mode: 'download', model: 'chatterbox' } 
+});
+```
+
+Frontend reads params:
+```javascript
+const params = new URLSearchParams(window.location.search);
+const mode = params.get('mode');  // 'full' or 'download'
+```
+3. **Path verification** - Logged both expected path AND `exists` boolean
+4. **Error event tracking** - Added `did-fail-load` handler to capture ERR_FILE_NOT_FOUND
+
+### Production Installer Test Checklist
+
+Before claiming installer works, verify in **packaged app** (not dev mode):
+- [ ] DMG mounts and shows Rift.app
+- [ ] App launches without "Required components" error
+- [ ] Setup wizard shows content (not blank)
+- [ ] Model downloads work with progress
+- [ ] Microphone permission flow works
+- [ ] Accessibility permission flow works (including restart if needed)
+- [ ] Voice preview plays audio
+- [ ] Setup completes and main widget appears
+
+## Learnings from 2026-04-04 Session (Website visual regression)
+
+1. **`website-qa` gate order** — **Gate 0:** **`bun run design:audit`** (principles in `.cursor/rules/design-principles.mdc`, skill `.cursor/skills/design-audit.md`) → **Gate 1:** **`bun run test:website`** (`agent-browser` pixel diff vs `test-engine/website-baselines/`) → **Gate 2:** **`bun run website:lighthouse`**. Refresh goldens after intentional layout/CSS changes with **`bun run test:website:update`**.
+2. **One-time browser** — After `bun install`, run `./node_modules/.bin/agent-browser install` once per machine so Chrome for Testing is available.
+3. **Pretext + demo section** — Sections containing `.rift-demo-window` must **skip** `layoutPage()` padding overrides; otherwise Pretext padding plus `min-height` on the demo reads as a large empty white box.
+4. **Tech quartet grid** — Use explicit **4 / 2 / 1** column breakpoints (e.g. 900px / 500px), not `auto-fit` + `minmax`, to avoid a **3+1** orphan row around ~960px.
+5. **`agent-browser eval --json`** wraps results as `{ success, data: { result } }` — extract `data.result` (see `scripts/design-audit-extract-json.js`). Do not use `node <<HEREDOC "$file"` with extra args — **node treats the first arg as the script file**; use a `.js` file or env vars instead.
+6. **Story section (`#story`)** — Prefer scannable **`.story-block`** blocks (`.story-condition` label + `.story-desc` with `data-pretext`) plus a **`.story-kicker`** line instead of long `.story-line` essay paragraphs. Gate 0 programmatic checks in `scripts/design-audit-eval.js` target **`p.story-desc` / `p.story-kicker`** inside `.story-body`.

@@ -1,0 +1,2351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rift Setup - Full Experience Prototype</title>
+  
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+  
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      /* macOS standard corner radius */
+      --corner-radius: 20px;
+      /* Increased opacity for WCAG 4.5:1 contrast per Apple HIG */
+      --text-primary: rgba(255, 255, 255, 0.95);
+      --text-secondary: rgba(255, 255, 255, 0.75);
+      --text-tertiary: rgba(255, 255, 255, 0.55);
+      --accent: #ff9f0a;
+      --accent-glow: rgba(255, 159, 10, 0.4);
+    }
+
+    html, body {
+      /* CRITICAL: Must be fully transparent for native vibrancy */
+      background: transparent !important;
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ============================================
+       LIQUID GLASS WINDOW
+       
+       Clean dark panel - FIXED SIZE, no resizing
+       ============================================ */
+    .window {
+      width: 520px;
+      height: 720px;  /* FIXED height - no resizing between stages */
+      position: relative;
+      border-radius: var(--corner-radius);
+      
+      /* Semi-transparent to let vibrancy blur show through */
+      background: rgba(28, 28, 30, 0.7);
+      
+      /* NOTHING - no border, no edge shadows */
+      border: none;
+      box-shadow: none;
+      outline: none;
+      
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 28px 32px 24px;  /* Reduced padding for more content room */
+      
+      /* No size transition */
+      transition: none;
+      overflow: hidden;
+    }
+
+    /* No pseudo-elements */
+    .window::before,
+    .window::after {
+      display: none;
+    }
+
+    /* ============================================
+       3D ORB CONTAINER - Seamless blend with glass
+       ============================================ */
+    .orb-container {
+      width: 200px;
+      height: 200px;
+      margin-bottom: 20px;
+      position: relative;
+      transition: width 0.3s ease, height 0.3s ease;
+      /* Radial mask fades edges into glass seamlessly */
+      -webkit-mask-image: radial-gradient(
+        circle at center,
+        black 0%,
+        black 35%,
+        transparent 50%
+      );
+      mask-image: radial-gradient(
+        circle at center,
+        black 0%,
+        black 35%,
+        transparent 50%
+      );
+    }
+
+    /* Smaller orb for content-heavy screens */
+    .orb-container.small {
+      width: 140px;
+      height: 140px;
+      margin-bottom: 12px;
+    }
+    
+    /* Hide orb completely when needed */
+    .orb-container.hidden {
+      display: none;
+    }
+
+    .orb-container canvas {
+      width: 100% !important;
+      height: 100% !important;
+      border: none !important;
+      outline: none !important;
+      background: transparent !important;
+    }
+
+    /* ============================================
+       TYPOGRAPHY
+       ============================================ */
+    /* Typography per Apple HIG macOS standards */
+    .title {
+      font-size: 28px;  /* Slightly larger for presence */
+      font-weight: 600;
+      color: var(--text-primary);
+      text-align: center;
+      margin-bottom: 16px;
+      letter-spacing: -0.5px;
+      line-height: 34px;
+    }
+
+    .subtitle {
+      font-size: 15px;  /* Slightly larger for readability */
+      font-weight: 400;
+      color: var(--text-secondary);
+      text-align: center;
+      margin-bottom: 8px;  /* Reduced - let content below add its own spacing */
+      line-height: 22px;
+      max-width: 380px;
+    }
+
+    /* ============================================
+       STAGE CONTENT AREAS
+       ============================================ */
+    .stage {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      width: 100%;
+      animation: fadeIn 0.4s ease;
+    }
+
+    .stage.active {
+      display: flex;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ============================================
+       DOWNLOAD PROGRESS (Tesla Transparency)
+       ============================================ */
+    .models-list {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+
+    .model-card {
+      /* Apple HIG: 35% dark dimming for clear variant legibility */
+      background: rgba(0, 0, 0, 0.35);
+      border-radius: 12px;
+      padding: 16px;
+      border: 0.5px solid rgba(255, 255, 255, 0.08);
+      /* Subtle inner highlight for glass-like depth */
+      box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.06);
+    }
+
+    .model-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .model-name {
+      font-size: 13px;  /* Apple Body: 13pt */
+      font-weight: 500;
+      color: var(--text-primary);
+      line-height: 16px;
+    }
+
+    .model-status {
+      font-size: 11px;  /* Apple Subheadline: 11pt */
+      font-weight: 500;
+      color: var(--text-tertiary);
+      font-variant-numeric: tabular-nums;
+      line-height: 14px;
+    }
+
+    .model-status.downloading {
+      color: var(--accent);
+    }
+
+    .model-status.complete {
+      color: rgba(52, 199, 89, 1);
+    }
+
+    .progress-bar {
+      height: 4px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), rgba(255, 180, 100, 1));
+      border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+
+    .progress-fill.complete {
+      background: rgba(52, 199, 89, 1);
+    }
+
+    .model-speed {
+      font-size: 10px;  /* Apple Caption: 10pt (minimum) */
+      color: var(--text-tertiary);
+      margin-top: 6px;
+      font-variant-numeric: tabular-nums;
+      line-height: 13px;
+    }
+
+    /* ============================================
+       PERMISSION SCREENS
+       ============================================ */
+    .permission-icon {
+      width: 72px;
+      height: 72px;
+      /* Apple HIG: 35% dark dimming */
+      background: rgba(0, 0, 0, 0.35);
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 24px;
+      font-size: 32px;
+      border: 0.5px solid rgba(255, 255, 255, 0.08);
+      box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.06);
+    }
+
+    .permission-bullets {
+      text-align: left;
+      margin-bottom: 32px;
+      width: 100%;
+      max-width: 360px;
+    }
+
+    .permission-bullets li {
+      font-size: 14px;
+      color: var(--text-secondary);
+      margin-bottom: 12px;
+      padding-left: 8px;
+      list-style: none;
+      position: relative;
+    }
+
+    .permission-bullets li::before {
+      content: '•';
+      position: absolute;
+      left: -12px;
+      color: var(--accent);
+    }
+
+    /* ============================================
+       TUTORIAL SCREENS
+       ============================================ */
+    .shortcut-display {
+      /* Apple HIG: 35% dark dimming for clear variant legibility */
+      background: rgba(0, 0, 0, 0.35);
+      border-radius: 12px;
+      padding: 24px 48px;
+      margin-bottom: 24px;
+      border: 0.5px solid rgba(255, 255, 255, 0.08);
+      text-align: center;
+      box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.06);
+    }
+
+    /* ============================================
+       VOICE SELECTION - Minimal Typography-First
+       ============================================ */
+    .voice-list {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      margin-top: 16px;
+      background: rgba(255, 255, 255, 0.04);
+      border-radius: 12px;
+      overflow: hidden;
+      max-height: 280px;  /* Fit 4 voices without scroll, allows room for button */
+    }
+    
+    /* Scrollable voice list for Chatterbox (10 voices) */
+    .voice-list.scrollable {
+      max-height: 280px;  /* Same as regular voice list to keep button in same position */
+      overflow-y: auto;
+      overflow-x: hidden;
+      /* Smooth scrolling */
+      scroll-behavior: smooth;
+      /* Custom scrollbar for dark theme */
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+    }
+    
+    .voice-list.scrollable::-webkit-scrollbar {
+      width: 6px;
+    }
+    
+    .voice-list.scrollable::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    
+    .voice-list.scrollable::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 3px;
+    }
+    
+    .voice-list.scrollable::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.3);
+    }
+
+    .voice-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 20px;  /* Reduced from 18px for tighter fit */
+      background: rgba(28, 28, 30, 0.7);
+      cursor: pointer;
+      transition: background 0.15s ease;
+      border: none;
+      width: 100%;
+      text-align: left;
+      font-family: inherit;
+    }
+
+    .voice-row:hover {
+      background: rgba(44, 44, 46, 0.8);
+    }
+
+    .voice-row.selected {
+      background: rgba(255, 159, 10, 0.08);
+    }
+
+    .voice-row.playing {
+      background: rgba(255, 159, 10, 0.15);
+    }
+
+    .voice-info {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .voice-name {
+      font-size: 17px;
+      font-weight: 500;
+      color: var(--text-primary);
+      letter-spacing: -0.3px;
+    }
+
+    .voice-desc {
+      font-size: 13px;
+      color: var(--text-secondary);
+      font-weight: 400;
+    }
+
+    .voice-indicator {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, 0.15);
+      transition: all 0.2s ease;
+      flex-shrink: 0;
+    }
+
+    .voice-row.selected .voice-indicator {
+      border-color: var(--accent);
+      background: var(--accent);
+    }
+
+    .voice-row.selected .voice-indicator::after {
+      content: '';
+      display: block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: rgba(0, 0, 0, 0.8);
+      margin: 6px;
+    }
+
+    .voice-row.playing .voice-indicator {
+      animation: voicePulse 0.8s ease-in-out infinite;
+    }
+
+    @keyframes voicePulse {
+      0%, 100% { 
+        transform: scale(1); 
+        box-shadow: 0 0 0 0 rgba(255, 159, 10, 0.4); 
+      }
+      50% { 
+        transform: scale(1.05); 
+        box-shadow: 0 0 0 6px rgba(255, 159, 10, 0); 
+      }
+    }
+
+    /* ============================================
+       CONSISTENT STAGE FOOTER
+       Button always in same position - generous spacing
+       ============================================ */
+    .stage-footer {
+      margin-top: auto;
+      padding-top: 48px;  /* Generous Jony Ive spacing */
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .stage-footer .btn {
+      min-width: 200px;
+    }
+
+    /* ============================================
+       SHORTCUT DISPLAY - Tutorial screens
+       Generous vertical rhythm
+       ============================================ */
+    .shortcut-display {
+      margin: 32px 0;
+      padding: 24px 48px;
+      background: rgba(0, 0, 0, 0.25);
+      border-radius: 16px;
+      text-align: center;
+    }
+
+    .shortcut-keys {
+      font-size: 48px;
+      font-weight: 300;
+      color: var(--text-primary);
+      letter-spacing: 4px;
+      margin-bottom: 12px;
+      font-family: 'SF Mono', Monaco, monospace;
+    }
+
+    .shortcut-label {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      line-height: 16px;
+    }
+
+    .shortcut-description {
+      font-size: 16px;
+      color: var(--text-secondary);
+      text-align: center;
+      max-width: 340px;
+      line-height: 1.6;
+      margin: 0 auto;
+    }
+
+    /* ============================================
+       READY SCREEN
+       ============================================ */
+    .shortcuts-summary {
+      width: 100%;
+      max-width: 320px;
+      margin-bottom: 32px;
+    }
+
+    .summary-row {
+      display: flex;
+      align-items: center;
+      padding: 12px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .summary-row:last-child {
+      border-bottom: none;
+    }
+
+    .summary-key {
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 14px;
+      color: var(--text-primary);
+      width: 48px;
+      font-weight: 500;
+    }
+
+    .summary-desc {
+      font-size: 14px;
+      color: var(--text-secondary);
+    }
+
+    /* ============================================
+       BUTTONS
+       ============================================ */
+    .btn {
+      /* Apple HIG: minimum 44px height for touch/click targets */
+      min-height: 44px;
+      padding: 12px 28px;
+      border-radius: 12px;
+      font-size: 13px;  /* Apple Body: 13pt */
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      border: none;
+      font-family: inherit;
+      line-height: 16px;
+    }
+
+    .btn-primary {
+      background: linear-gradient(180deg, var(--accent) 0%, #e68a00 100%);
+      color: white;
+      box-shadow: 
+        0 2px 8px var(--accent-glow),
+        inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    }
+
+    .btn-primary:hover {
+      background: linear-gradient(180deg, #ffb030 0%, var(--accent) 100%);
+      transform: translateY(-1px);
+      box-shadow: 
+        0 4px 16px var(--accent-glow),
+        inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-primary);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    .btn-success {
+      background: linear-gradient(180deg, #34c759 0%, #28a745 100%);
+      color: white;
+      box-shadow: 0 2px 8px rgba(52, 199, 89, 0.3);
+    }
+
+    .btn-success:hover {
+      background: linear-gradient(180deg, #40d865 0%, #34c759 100%);
+    }
+
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    /* ============================================
+       TRUST LINE - Flows with content, pushed to bottom
+       ============================================ */
+    .trust-line {
+      margin-top: auto;
+      padding-top: 20px;
+      font-size: 11px;
+      color: var(--text-tertiary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .trust-line::before {
+      content: '🔒';
+      font-size: 10px;
+    }
+
+    /* ============================================
+       UTILITY CLASSES
+       ============================================ */
+    .mt-sm { margin-top: 12px; }
+    .mt-md { margin-top: 16px; }
+    .mt-lg { margin-top: 20px; }
+    .mt-xl { margin-top: 24px; }
+    
+    .text-hint {
+      font-size: 13px;
+      color: var(--text-tertiary);
+    }
+    
+    .summary-key-wide {
+      width: auto;
+      margin-right: 12px;
+    }
+
+    /* ============================================
+       STAGE INDICATOR
+       ============================================ */
+    .stage-dots {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+
+    .stage-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.2);
+      transition: all 0.3s ease;
+    }
+
+    .stage-dot.active {
+      background: var(--accent);
+      width: 24px;
+      border-radius: 4px;
+    }
+
+    .stage-dot.complete {
+      background: rgba(52, 199, 89, 1);
+    }
+
+    /* Loading placeholder */
+    .loading-placeholder {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      background: radial-gradient(circle, transparent 20%, rgba(255, 140, 50, 0.15) 40%, transparent 55%);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 0.5; transform: scale(1); }
+      50% { opacity: 0.8; transform: scale(1.02); }
+    }
+
+    /* Optional model checkbox */
+    .optional-model {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px;
+      background: var(--glass-bg-dark);
+      border-radius: 12px;
+      margin-top: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .optional-model:hover {
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    .optional-model input[type="checkbox"] {
+      width: 20px;
+      height: 20px;
+      accent-color: var(--accent);
+    }
+
+    .optional-model-info {
+      flex: 1;
+    }
+
+    .optional-model-name {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .optional-model-desc {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      margin-top: 2px;
+    }
+
+    .optional-model-size {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      font-variant-numeric: tabular-nums;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="window">
+    <div class="orb-container" id="orb-container">
+      <div class="loading-placeholder" id="loading"></div>
+    </div>
+
+    <!-- ============================================
+         STAGE: CHATTERBOX DOWNLOAD (On-demand model download)
+         Single screen for downloading Chatterbox model
+         ============================================ -->
+    <div class="stage" id="stage-chatterbox-download">
+      <div class="stage-dots">
+        <div class="stage-dot active"></div>
+        <div class="stage-dot"></div>
+      </div>
+      
+      <h1 class="title">Downloading Chatterbox</h1>
+      <p class="subtitle">This expressive TTS model (~350 MB) will be ready in a moment.</p>
+      
+      <div class="models-list">
+        <div class="model-card" id="model-chatterbox">
+          <div class="model-header">
+            <span class="model-name">Chatterbox Turbo</span>
+            <span class="model-status downloading" id="chatterbox-status">0 / 350 MB</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" id="chatterbox-progress" style="width: 0%"></div>
+          </div>
+          <div class="model-speed" id="chatterbox-speed"></div>
+        </div>
+      </div>
+
+      <div class="trust-line">Everything runs privately on your Mac</div>
+    </div>
+    
+    <!-- ============================================
+         STAGE: CHATTERBOX VOICE SELECTION
+         Voice picker for Chatterbox voices (scrollable)
+         ============================================ -->
+    <div class="stage" id="stage-chatterbox-voice">
+      <div class="stage-dots">
+        <div class="stage-dot complete"></div>
+        <div class="stage-dot active"></div>
+      </div>
+      
+      <h1 class="title">Choose a Voice</h1>
+      <p class="subtitle" id="chatterbox-voice-subtitle">Chatterbox has 10 expressive voices. Tap to preview.</p>
+      
+      <div class="voice-list scrollable" id="chatterbox-voice-list">
+        <button type="button" class="voice-row selected" data-voice="chloe">
+          <div class="voice-info">
+            <span class="voice-name">Chloe</span>
+            <span class="voice-desc">Warm and friendly</span>
+          </div>
+          <div class="voice-indicator"></div>
+        </button>
+        <button type="button" class="voice-row" data-voice="aaron">
+          <div class="voice-info">
+            <span class="voice-name">Aaron</span>
+            <span class="voice-desc">Clear and confident</span>
+          </div>
+          <div class="voice-indicator"></div>
+        </button>
+        <button type="button" class="voice-row" data-voice="abigail">
+          <div class="voice-info">
+            <span class="voice-name">Abigail</span>
+            <span class="voice-desc">Soft and gentle</span>
+          </div>
+          <div class="voice-indicator"></div>
+        </button>
+        <button type="button" class="voice-row" data-voice="anaya">
+          <div class="voice-info">
+            <span class="voice-name">Anaya</span>
+            <span class="voice-desc">Bright and energetic</span>
+          </div>
+          <div class="voice-indicator"></div>
+        </button>
+        <button type="button" class="voice-row" data-voice="andy">
+          <div class="voice-info">
+            <span class="voice-name">Andy</span>
+            <span class="voice-desc">Casual and relaxed</span>
+          </div>
+          <div class="voice-indicator"></div>
+        </button>
+        <button type="button" class="voice-row" data-voice="archer">
+          <div class="voice-info">
+            <span class="voice-name">Archer</span>
+            <span class="voice-desc">Deep and resonant</span>
+          </div>
+          <div class="voice-indicator"></div>
+        </button>
+        <button type="button" class="voice-row" data-voice="brian">
+          <div class="voice-info">
+            <span class="voice-name">Brian</span>
+            <span class="voice-desc">Professional tone</span>
+          </div>
+          <div class="voice-indicator"></div>
+        </button>
+        <button type="button" class="voice-row" data-voice="dylan">
+          <div class="voice-info">
+            <span class="voice-name">Dylan</span>
+            <span class="voice-desc">Youthful energy</span>
+          </div>
+          <div class="voice-indicator"></div>
+        </button>
+        <button type="button" class="voice-row" data-voice="evelyn">
+          <div class="voice-info">
+            <span class="voice-name">Evelyn</span>
+            <span class="voice-desc">Elegant and poised</span>
+          </div>
+          <div class="voice-indicator"></div>
+        </button>
+        <button type="button" class="voice-row" data-voice="fiona">
+          <div class="voice-info">
+            <span class="voice-name">Fiona</span>
+            <span class="voice-desc">Expressive storyteller</span>
+          </div>
+          <div class="voice-indicator"></div>
+        </button>
+      </div>
+
+      <div class="stage-footer">
+        <button class="btn btn-primary" onclick="finishChatterboxSetup()">Use This Voice</button>
+        <div class="trust-line">Everything runs privately on your Mac</div>
+      </div>
+    </div>
+
+    <!-- ============================================
+         STAGE 1: DOWNLOAD
+         5 dots: Download | Permissions | Voice | Tutorials | Ready
+         ============================================ -->
+    <div class="stage active" id="stage-download">
+      <div class="stage-dots">
+        <div class="stage-dot active"></div>
+        <div class="stage-dot"></div>
+        <div class="stage-dot"></div>
+        <div class="stage-dot"></div>
+        <div class="stage-dot"></div>
+      </div>
+      
+      <h1 class="title">Preparing Rift</h1>
+      <p class="subtitle">Downloading the AI models that power your voice assistant. This only happens once.</p>
+
+      <p class="subtitle" id="setup-download-phase" style="min-height:1.25em; font-size: 0.9rem; opacity: 0.85;"></p>
+      
+      <div class="models-list">
+        <div class="model-card" id="model-kokoro">
+          <div class="model-header">
+            <span class="model-name">Kokoro Voice</span>
+            <span class="model-status" id="kokoro-status">Queued • 80 MB</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" id="kokoro-progress" style="width: 0%"></div>
+          </div>
+          <div class="model-speed" id="kokoro-speed" style="display:none"></div>
+        </div>
+        
+        <div class="model-card" id="model-parakeet">
+          <div class="model-header">
+            <span class="model-name">Parakeet Transcription</span>
+            <span class="model-status" id="parakeet-status">Queued • 600 MB</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" id="parakeet-progress" style="width: 0%"></div>
+          </div>
+          <div class="model-speed" id="parakeet-speed" style="display:none"></div>
+        </div>
+        
+        <div class="model-card" id="model-qwen">
+          <div class="model-header">
+            <span class="model-name">Qwen3 Fast</span>
+            <span class="model-status" id="qwen-status">Queued • 400 MB</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" id="qwen-progress" style="width: 0%"></div>
+          </div>
+          <div class="model-speed" id="qwen-speed" style="display:none"></div>
+        </div>
+
+        <div class="model-card" id="model-gemma">
+          <div class="model-header">
+            <span class="model-name">Gemma Intelligence</span>
+            <span class="model-status" id="gemma-status">After setup (~5 GB)</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" id="gemma-progress" style="width: 0%"></div>
+          </div>
+          <div class="model-speed" id="gemma-speed" style="display:none"></div>
+        </div>
+      </div>
+
+      <div class="trust-line">Everything runs privately on your Mac</div>
+    </div>
+
+    <!-- ============================================
+         STAGE 2A: MICROPHONE PERMISSION
+         5 dots: Download | Permissions | Voice | Tutorials | Ready
+         ============================================ -->
+    <div class="stage" id="stage-mic">
+      <div class="stage-dots">
+        <div class="stage-dot complete"></div>
+        <div class="stage-dot active"></div>
+        <div class="stage-dot"></div>
+        <div class="stage-dot"></div>
+        <div class="stage-dot"></div>
+      </div>
+
+      <div class="permission-icon">🎤</div>
+      
+      <h1 class="title">Rift needs your voice</h1>
+      <p class="subtitle">To transcribe what you say, Rift needs access to your microphone.</p>
+      
+      <ul class="permission-bullets">
+        <li>Your voice is processed entirely on your Mac</li>
+        <li>No audio is ever sent to the cloud</li>
+        <li>Rift only listens when you press the shortcut</li>
+      </ul>
+
+      <div class="stage-footer">
+        <button class="btn btn-primary" id="mic-btn" onclick="requestMicrophonePermission()">Enable Microphone</button>
+        <div class="trust-line">Everything runs privately on your Mac</div>
+      </div>
+    </div>
+
+    <!-- ============================================
+         STAGE 2B: ACCESSIBILITY PERMISSION
+         5 dots: Download | Permissions | Voice | Tutorials | Ready
+         ============================================ -->
+    <div class="stage" id="stage-accessibility">
+      <div class="stage-dots">
+        <div class="stage-dot complete"></div>
+        <div class="stage-dot active"></div>
+        <div class="stage-dot"></div>
+        <div class="stage-dot"></div>
+        <div class="stage-dot"></div>
+      </div>
+
+      <div class="permission-icon">⌨️</div>
+      
+      <h1 class="title">Rift needs Accessibility</h1>
+      <p class="subtitle">To type your dictated text and use global shortcuts, Rift needs Accessibility permission.</p>
+      
+      <ul class="permission-bullets">
+        <li>Allows Rift to paste text where you're typing</li>
+        <li>Enables global keyboard shortcuts (⌃1, ⌃2, ⌃3)</li>
+        <li>Required by macOS for all dictation apps</li>
+      </ul>
+
+      <div class="stage-footer">
+        <button class="btn btn-primary" id="accessibility-btn" onclick="requestAccessibilityPermission()">Open System Settings</button>
+        <p class="subtitle text-hint" style="margin-top: 8px;">Toggle ON for Rift, then return here</p>
+        <div class="trust-line">Everything runs privately on your Mac</div>
+      </div>
+    </div>
+
+    <!-- ============================================
+         STAGE 3: VOICE SELECTION
+         Real Kokoro voices - tap to preview
+         ============================================ -->
+    <div class="stage" id="stage-voice">
+      <div class="stage-dots">
+        <div class="stage-dot complete"></div>
+        <div class="stage-dot complete"></div>
+        <div class="stage-dot active"></div>
+        <div class="stage-dot"></div>
+        <div class="stage-dot"></div>
+      </div>
+      
+      <h1 class="title">Your voice</h1>
+      <p class="subtitle" id="voice-subtitle">Tap any voice to preview.</p>
+      
+      <div class="voice-list" id="voice-list">
+        <button type="button" class="voice-row selected" data-voice="af_heart">
+          <div class="voice-info">
+            <span class="voice-name">Heart</span>
+            <span class="voice-desc">Warm and expressive</span>
+          </div>
+          <div class="voice-indicator"></div>
+        </button>
+        
+        <button type="button" class="voice-row" data-voice="af_bella">
+          <div class="voice-info">
+            <span class="voice-name">Bella</span>
+            <span class="voice-desc">Clear and articulate</span>
+          </div>
+          <div class="voice-indicator"></div>
+        </button>
+        
+        <button type="button" class="voice-row" data-voice="af_sarah">
+          <div class="voice-info">
+            <span class="voice-name">Sarah</span>
+            <span class="voice-desc">Friendly and natural</span>
+          </div>
+          <div class="voice-indicator"></div>
+        </button>
+        
+        <button type="button" class="voice-row" data-voice="bf_emma">
+          <div class="voice-info">
+            <span class="voice-name">Emma</span>
+            <span class="voice-desc">British accent</span>
+          </div>
+          <div class="voice-indicator"></div>
+        </button>
+      </div>
+
+      <div class="stage-footer">
+        <button class="btn btn-primary" onclick="confirmVoice()">Continue</button>
+        <div class="trust-line">Everything runs privately on your Mac</div>
+      </div>
+    </div>
+
+    <!-- ============================================
+         STAGE 4A: TUTORIAL - READ ALOUD
+         5 dots: Download | Permissions | Voice | Tutorials | Ready
+         ============================================ -->
+    <div class="stage" id="stage-tutorial-1">
+      <div class="stage-dots">
+        <div class="stage-dot complete"></div>
+        <div class="stage-dot complete"></div>
+        <div class="stage-dot complete"></div>
+        <div class="stage-dot active"></div>
+        <div class="stage-dot"></div>
+      </div>
+      
+      <h1 class="title">Read text aloud</h1>
+      <p class="subtitle">Select any text in any app, then press:</p>
+      
+      <div class="shortcut-display">
+        <div class="shortcut-keys">⌃ 1</div>
+        <div class="shortcut-label">Control + 1</div>
+      </div>
+      
+      <p class="shortcut-description">Rift will read the selected text to you using a natural voice.</p>
+
+      <div class="stage-footer">
+        <button class="btn btn-primary" onclick="nextStage()">Next</button>
+        <div class="trust-line">Everything runs privately on your Mac</div>
+      </div>
+    </div>
+
+    <!-- ============================================
+         STAGE 4B: TUTORIAL - DICTATION
+         5 dots: Download | Permissions | Voice | Tutorials | Ready
+         ============================================ -->
+    <div class="stage" id="stage-tutorial-2">
+      <div class="stage-dots">
+        <div class="stage-dot complete"></div>
+        <div class="stage-dot complete"></div>
+        <div class="stage-dot complete"></div>
+        <div class="stage-dot active"></div>
+        <div class="stage-dot"></div>
+      </div>
+      
+      <h1 class="title">Voice dictation</h1>
+      <p class="subtitle">Click in any text field, then press:</p>
+      
+      <div class="shortcut-display">
+        <div class="shortcut-keys">⌃ 2</div>
+        <div class="shortcut-label">Control + 2</div>
+      </div>
+      
+      <p class="shortcut-description">Speak naturally. Your words appear as you talk. Press again to stop.</p>
+
+      <div class="stage-footer">
+        <button class="btn btn-primary" onclick="nextStage()">Next</button>
+        <div class="trust-line">Everything runs privately on your Mac</div>
+      </div>
+    </div>
+
+    <!-- ============================================
+         STAGE 4C: TUTORIAL - SHOW/HIDE
+         5 dots: Download | Permissions | Voice | Tutorials | Ready
+         ============================================ -->
+    <div class="stage" id="stage-tutorial-3">
+      <div class="stage-dots">
+        <div class="stage-dot complete"></div>
+        <div class="stage-dot complete"></div>
+        <div class="stage-dot complete"></div>
+        <div class="stage-dot active"></div>
+        <div class="stage-dot"></div>
+      </div>
+      
+      <h1 class="title">Show or hide Rift</h1>
+      <p class="subtitle">Toggle the Rift window anytime with:</p>
+      
+      <div class="shortcut-display">
+        <div class="shortcut-keys">⌃ 3</div>
+        <div class="shortcut-label">Control + 3</div>
+      </div>
+      
+      <p class="shortcut-description">Or press Escape to dismiss. Find Rift in your menu bar anytime.</p>
+
+      <div class="stage-footer">
+        <button class="btn btn-primary" onclick="nextStage()">Next</button>
+        <div class="trust-line">Everything runs privately on your Mac</div>
+      </div>
+    </div>
+
+    <!-- ============================================
+         STAGE 5: READY
+         5 dots: Download | Permissions | Voice | Tutorials | Ready
+         ============================================ -->
+    <div class="stage" id="stage-ready">
+      <div class="stage-dots">
+        <div class="stage-dot complete"></div>
+        <div class="stage-dot complete"></div>
+        <div class="stage-dot complete"></div>
+        <div class="stage-dot complete"></div>
+        <div class="stage-dot active"></div>
+      </div>
+      
+      <h1 class="title">Welcome to Rift</h1>
+      <p class="subtitle">You're all set. Here's a quick reference:</p>
+      
+      <div class="shortcuts-summary">
+        <div class="summary-row">
+          <span class="summary-key">⌃1</span>
+          <span class="summary-desc">Read selected text aloud</span>
+        </div>
+        <div class="summary-row">
+          <span class="summary-key">⌃2</span>
+          <span class="summary-desc">Start voice dictation</span>
+        </div>
+        <div class="summary-row">
+          <span class="summary-key">⌃3</span>
+          <span class="summary-desc">Show or hide Rift</span>
+        </div>
+      </div>
+
+      <div class="stage-footer">
+        <button class="btn btn-primary" onclick="finishSetup()">Start Using Rift</button>
+        <div class="trust-line">Everything runs privately on your Mac</div>
+      </div>
+    </div>
+
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+    import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+    import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+    // Shader code (same as before, abbreviated for space)
+    const vertexShader = `
+      varying vec3 vPosition;
+      varying vec3 vNormal;
+      varying vec3 vWorldPosition;
+      varying vec3 vViewDirection;
+      
+      void main() {
+        vPosition = position;
+        vNormal = normal;
+        vec4 worldPos = modelMatrix * vec4(position, 1.0);
+        vWorldPosition = worldPos.xyz;
+        vViewDirection = normalize(cameraPosition - worldPos.xyz);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `;
+
+    const fragmentShader = `
+      precision highp float;
+      
+      varying vec3 vPosition;
+      varying vec3 vNormal;
+      varying vec3 vWorldPosition;
+      varying vec3 vViewDirection;
+      
+      uniform float uTime;
+      uniform float uAudioLevel;
+      uniform vec3 uRampCol1;
+      uniform vec3 uRampCol2;
+      uniform vec3 uRampCol3;
+      uniform float uRampPos1;
+      uniform float uRampPos2;
+      uniform float uRampPos3;
+      uniform float uEmission;
+      uniform vec3 uEmissionColor;
+      uniform sampler2D uNoiseTexture;
+      uniform sampler2D uStarsTexture;
+      uniform vec3 uCameraPos;
+      uniform float uBackgroundIntensity;
+      
+      const float ITERATIONS = 128.0;
+      const float STEP_SIZE = 0.0071;
+      const float NOISE_FACTOR = 0.01;
+      const float POWER = 0.3;
+      const float ORIGIN_RADIUS = 0.13;
+      const float BAND_WIDTH = 0.03;
+      
+      #define PI 3.14159265359
+      #define PI2 6.28318530718
+      
+      float whiteNoise2D(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+      float len(vec3 v) { return sqrt(v.x * v.x + v.y * v.y + v.z * v.z); }
+      
+      mat3 rotateAxis(vec3 axis, float angle) {
+        float s = sin(angle); float c = cos(angle); float oc = 1.0 - c;
+        return mat3(oc*axis.x*axis.x+c, oc*axis.x*axis.y-axis.z*s, oc*axis.z*axis.x+axis.y*s,
+                    oc*axis.x*axis.y+axis.z*s, oc*axis.y*axis.y+c, oc*axis.y*axis.z-axis.x*s,
+                    oc*axis.z*axis.x-axis.y*s, oc*axis.y*axis.z+axis.x*s, oc*axis.z*axis.z+c);
+      }
+      
+      float smoothRange(float value, float inMin, float inMax, float outMin, float outMax) {
+        float t = clamp((value - inMin) / (inMax - inMin + 0.0001), 0.0, 1.0);
+        return mix(outMin, outMax, t * t * (3.0 - 2.0 * t));
+      }
+      
+      vec3 catmullRom(float t, vec3 p0, vec3 p1, vec3 p2, vec3 p3) {
+        return 0.5 * ((2.0*p1) + (-p0+p2)*t + (2.0*p0-5.0*p1+4.0*p2-p3)*t*t + (-p0+3.0*p1-3.0*p2+p3)*t*t*t);
+      }
+      
+      vec3 colorRamp3BSpline(float T, vec3 colA, float posA, vec3 colB, float posB, vec3 colC, float posC) {
+        float iAB = clamp((T-posA)/(posB-posA+0.0001), 0.0, 1.0);
+        float iBC = clamp((T-posB)/(posC-posB+0.0001), 0.0, 1.0);
+        vec3 cA = catmullRom(1.0-iAB, colA, colA, colB, colC);
+        vec3 cB = catmullRom(iAB-iBC, colA, colB, colC, colC);
+        if (T < posB) return cA;
+        if (T < posC) return cB;
+        return colC;
+      }
+      
+      float vecToFac(vec3 v) { return v.r*0.2126 + v.g*0.7152 + v.b*0.0722; }
+      vec3 srgbToLinear(vec3 rgb) { return mix(rgb/12.92, pow((rgb+0.055)/1.055, vec3(2.4)), step(0.04045, rgb)); }
+      vec3 linearToSrgb(vec3 lin) { return mix(lin*12.92, pow(lin, vec3(1.0/2.4))*1.055-0.055, step(0.0031308, lin)); }
+      vec2 equirectUV(vec3 dir) { return vec2(atan(dir.z, dir.x)/PI2+0.5, asin(clamp(dir.y,-1.0,1.0))/PI+0.5); }
+      float remapClamp(float v, float a, float b, float c, float d) { return mix(c, d, clamp((v-a)/(b-a+0.0001), 0.0, 1.0)); }
+      
+      void main() {
+        vec3 objCoords = vPosition * vec3(1.0, 1.0, -1.0); objCoords = objCoords.xzy;
+        float isBackface = gl_FrontFacing ? 0.0 : 1.0;
+        vec3 camPointObj = uCameraPos * vec3(1.0, 1.0, -1.0); camPointObj = camPointObj.xzy;
+        vec3 startCoords = mix(objCoords, camPointObj, isBackface);
+        vec3 viewInWorld = normalize(uCameraPos - vWorldPosition);
+        viewInWorld = viewInWorld * vec3(1.0, 1.0, -1.0); viewInWorld = viewInWorld.xzy;
+        vec3 rayDir = -viewInWorld;
+        vec3 rayPos = startCoords - rayDir * whiteNoise2D(objCoords.xy) * NOISE_FACTOR;
+        vec3 colorAcc = vec3(0.0); float alphaAcc = 0.0;
+        
+        for (float i = 0.0; i < ITERATIONS; i += 1.0) {
+          if (alphaAcc > 0.99) break;
+          vec3 rNorm = normalize(rayPos); float rLen = len(rayPos);
+          float steerMag = STEP_SIZE * POWER / (rLen * rLen + 0.0001);
+          vec3 steer = rNorm * steerMag * remapClamp(rLen, 1.0, 0.5, 0.0, 1.0);
+          vec3 steeredDir = normalize(rayDir - steer);
+          vec3 advance = rayDir * STEP_SIZE; rayPos += advance;
+          
+          float xyLen = len(rayPos * vec3(1.0, 1.0, 0.0));
+          mat3 rotMat = rotateAxis(vec3(0.0, 0.0, 1.0), xyLen * 4.27 - uTime * 0.1 - uAudioLevel * 0.25);
+          vec2 uvSample = (rotMat * rayPos).xy * 2.0;
+          vec4 noiseDeep = texture2D(uNoiseTexture, uvSample);
+          
+          vec3 zBand = max((vec3(BAND_WIDTH) - pow(vec3(-BAND_WIDTH, 0.0, BAND_WIDTH) - vec3(rayPos.z), vec3(2.0)) / BAND_WIDTH) / BAND_WIDTH, vec3(0.0));
+          vec3 noiseAmp3 = noiseDeep.rgb * zBand;
+          float noiseAmpLen = len(noiseAmp3);
+          vec4 noiseNormal = texture2D(uNoiseTexture, uvSample * 1.002);
+          float noiseNormalLen = len(noiseNormal.rgb * zBand);
+          
+          float rampInput = xyLen + (noiseAmpLen - 0.78) * 1.5 + (noiseAmpLen - noiseNormalLen) * 19.75;
+          vec3 baseCol = colorRamp3BSpline(rampInput, uRampCol1, uRampPos1, uRampCol2, uRampPos2, uRampCol3, uRampPos3);
+          vec3 emissiveCol = baseCol * uEmission * (1.0 + uAudioLevel * 0.35) + uEmissionColor;
+          
+          float insideCore = step(len(rayPos), ORIGIN_RADIUS);
+          vec3 shadedCol = mix(emissiveCol, vec3(0.0), insideCore);
+          
+          float aBand = smoothRange(abs(rayPos.z) + (noiseAmpLen - 0.75) * -0.6, BAND_WIDTH, 0.0, 0.0, smoothRange(xyLen, 1.0, 0.0, 0.0, 1.0));
+          float alphaLocal = mix(aBand, 1.0, insideCore);
+          
+          float weight = (1.0 - alphaAcc) * vecToFac(vec3(alphaLocal));
+          colorAcc = mix(colorAcc, shadedCol, weight);
+          alphaAcc = mix(alphaAcc, 1.0, vecToFac(vec3(alphaLocal)));
+          rayPos += advance; rayDir = steeredDir;
+        }
+        
+        vec3 dirForEnv = rayDir * vec3(1.0, -1.0, 1.0); dirForEnv = dirForEnv.xzy;
+        vec3 env = linearToSrgb(texture2D(uStarsTexture, equirectUV(dirForEnv)).rgb * uBackgroundIntensity);
+        vec3 finalRGB = srgbToLinear(mix(colorAcc, env, 1.0 - alphaAcc)) * (1.0 + uAudioLevel * 0.12);
+        float edgeFade = 1.0 - smoothstep(0.6, 1.0, length(vPosition.xy));
+        gl_FragColor = vec4(finalRGB, alphaAcc * edgeFade);
+      }
+    `;
+
+    const STATE_COLORS = {
+      idle: { rampCol1: new THREE.Color(0.95, 0.71, 0.44), rampCol2: new THREE.Color(0.14, 0.05, 0.03), rampCol3: new THREE.Color(0,0,0), rampPos1: 0.05, rampPos2: 0.425, rampPos3: 1.0, emission: 2.0, emissionColor: new THREE.Color(0.14, 0.129, 0.09) },
+      active: { rampCol1: new THREE.Color(1.0, 0.8, 0.5), rampCol2: new THREE.Color(0.2, 0.08, 0.02), rampCol3: new THREE.Color(0,0,0), rampPos1: 0.04, rampPos2: 0.4, rampPos3: 1.0, emission: 2.8, emissionColor: new THREE.Color(0.18, 0.14, 0.08) },
+      speaking: { rampCol1: new THREE.Color(1.0, 0.85, 0.55), rampCol2: new THREE.Color(0.25, 0.1, 0.03), rampCol3: new THREE.Color(0,0,0), rampPos1: 0.03, rampPos2: 0.35, rampPos3: 1.0, emission: 3.2, emissionColor: new THREE.Color(0.22, 0.16, 0.08) },
+      success: { rampCol1: new THREE.Color(0.55, 0.98, 0.65), rampCol2: new THREE.Color(0.04, 0.14, 0.06), rampCol3: new THREE.Color(0,0,0), rampPos1: 0.05, rampPos2: 0.44, rampPos3: 1.0, emission: 2.5, emissionColor: new THREE.Color(0.08, 0.14, 0.09) },
+    };
+
+    let renderer, scene, camera, composer, material, mesh;
+    let currentState = 'idle';
+    let startTime = Date.now();
+    let audioLevel = 0;
+    let targetAudioLevel = 0;
+
+    async function init() {
+      const container = document.getElementById('orb-container');
+      const loading = document.getElementById('loading');
+      const size = 220;
+      
+      renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, premultipliedAlpha: false });
+      renderer.setSize(size, size);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setClearColor(0x000000, 0);
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.2;
+      
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(50, 1, 0.1, 2000);
+      camera.position.set(1, 0.5, 3);
+      camera.lookAt(0, 0, 0);
+      
+      const { noiseTexture, starsTexture } = await loadTextures();
+      
+      material = new THREE.ShaderMaterial({
+        vertexShader, fragmentShader,
+        uniforms: {
+          uTime: { value: 0 }, uAudioLevel: { value: 0 },
+          uRampCol1: { value: STATE_COLORS.idle.rampCol1.clone() },
+          uRampCol2: { value: STATE_COLORS.idle.rampCol2.clone() },
+          uRampCol3: { value: STATE_COLORS.idle.rampCol3.clone() },
+          uRampPos1: { value: 0.05 }, uRampPos2: { value: 0.425 }, uRampPos3: { value: 1.0 },
+          uEmission: { value: 2.0 },
+          uEmissionColor: { value: STATE_COLORS.idle.emissionColor.clone() },
+          uNoiseTexture: { value: noiseTexture }, uStarsTexture: { value: starsTexture },
+          uCameraPos: { value: camera.position.clone() }, uBackgroundIntensity: { value: 2.0 },
+        },
+        transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide,
+      });
+      
+      mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 16), material);
+      scene.add(mesh);
+      
+      composer = new EffectComposer(renderer);
+      composer.addPass(new RenderPass(scene, camera));
+      composer.addPass(new UnrealBloomPass(new THREE.Vector2(size, size), 0.217, 0, 0));
+      composer.addPass(new OutputPass());
+      
+      loading.style.display = 'none';
+      container.appendChild(renderer.domElement);
+      animate();
+    }
+
+    function loadTextures() {
+      const loader = new THREE.TextureLoader();
+      return new Promise(resolve => {
+        let noise, stars, loaded = 0;
+        const done = () => { if (++loaded === 2) resolve({ noiseTexture: noise, starsTexture: stars }); };
+        
+        loader.load('./assets/noise_deep.png', t => { noise = t; noise.wrapS = noise.wrapT = THREE.RepeatWrapping; done(); }, undefined, () => { noise = createNoiseTexture(); done(); });
+        loader.load('./assets/stars.png', t => { stars = t; stars.mapping = THREE.EquirectangularReflectionMapping; stars.colorSpace = THREE.SRGBColorSpace; done(); }, undefined, () => { stars = createStarsTexture(); done(); });
+      });
+    }
+
+    function createNoiseTexture() {
+      const size = 512, data = new Uint8Array(size * size * 4);
+      for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+        const i = (y * size + x) * 4, fx = x/size, fy = y/size;
+        data[i] = (Math.sin(fx*12.56+fy*3)*0.15+0.75)*255;
+        data[i+1] = (Math.sin(fy*15.7+fx*2.5+1)*0.15+0.75)*255;
+        data[i+2] = (Math.sin((fx+fy)*12.56+2)*0.15+0.8)*255;
+        data[i+3] = 255;
+      }
+      const t = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+      t.wrapS = t.wrapT = THREE.RepeatWrapping; t.needsUpdate = true; return t;
+    }
+
+    function createStarsTexture() {
+      const size = 1024, data = new Uint8Array(size * size * 4);
+      for (let i = 0; i < size * size; i++) {
+        const idx = i * 4;
+        data[idx] = data[idx+1] = 2; data[idx+2] = 8; data[idx+3] = 255;
+        if (Math.random() < 0.0008) data[idx] = data[idx+1] = data[idx+2] = 80 + Math.random()*175;
+      }
+      const t = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+      t.mapping = THREE.EquirectangularReflectionMapping; t.needsUpdate = true; return t;
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const time = (Date.now() - startTime) / 1000;
+      
+      // Use external audio level if set, otherwise gentle breathing
+      const breathe = Math.sin(time * 0.8) * 0.25 + 0.3;
+      const targetLevel = targetAudioLevel > 0 ? targetAudioLevel : breathe;
+      audioLevel += (targetLevel - audioLevel) * 0.15;
+      
+      const target = STATE_COLORS[currentState] || STATE_COLORS.idle;
+      material.uniforms.uRampCol1.value.lerp(target.rampCol1, 0.08);
+      material.uniforms.uRampCol2.value.lerp(target.rampCol2, 0.08);
+      material.uniforms.uEmissionColor.value.lerp(target.emissionColor, 0.08);
+      material.uniforms.uEmission.value += (target.emission - material.uniforms.uEmission.value) * 0.08;
+      material.uniforms.uTime.value = time;
+      material.uniforms.uAudioLevel.value = audioLevel;
+      composer.render();
+    }
+
+    // Expose controls to the page
+    window.setOrbState = (state) => { currentState = state; };
+    window.setAudioLevel = (level) => { targetAudioLevel = level; };
+    init();
+  </script>
+
+  <script>
+    // ============================================
+    // STAGE MANAGEMENT
+    // ============================================
+    
+    let currentStageIndex = 0;
+    
+    const installStages = ['download', 'mic', 'accessibility', 'voice', 'tutorial-1', 'tutorial-2', 'tutorial-3', 'ready'];
+    
+    function getStages() {
+      return installStages;
+    }
+    
+    function goToStage(stageId) {
+      // Hide all stages
+      document.querySelectorAll('.stage').forEach(s => s.classList.remove('active'));
+      
+      // Show target stage
+      const stage = document.getElementById('stage-' + stageId);
+      if (stage) {
+        stage.classList.add('active');
+        currentStageIndex = getStages().indexOf(stageId);
+        
+        // Resize orb for content-heavy stages
+        const orbContainer = document.querySelector('.orb-container');
+        if (stageId === 'voice') {
+          orbContainer.classList.add('small');
+          // Auto-play the first voice when landing on this screen
+          setTimeout(() => {
+            const firstVoice = document.querySelector('#voice-list .voice-row');
+            if (firstVoice && !firstVoice.classList.contains('playing')) {
+              const voiceId = firstVoice.dataset.voice;
+              console.log('[Setup] Auto-playing first voice:', voiceId);
+              selectVoice(voiceId, firstVoice);
+            }
+          }, 500); // Small delay to ensure TTS server is ready
+        } else {
+          orbContainer.classList.remove('small');
+        }
+        
+        // Update orb state
+        if (stageId === 'ready') {
+          window.setOrbState?.('success');
+        } else if (stageId.includes('download')) {
+          window.setOrbState?.('active');
+        } else {
+          window.setOrbState?.('idle');
+        }
+      }
+    }
+    
+    function nextStage() {
+      const stages = getStages();
+      if (currentStageIndex < stages.length - 1) {
+        currentStageIndex++;
+        goToStage(stages[currentStageIndex]);
+      }
+    }
+    
+    
+    // ============================================
+    // REAL PERMISSION REQUESTS
+    // ============================================
+    
+    async function requestMicrophonePermission() {
+      const btn = document.getElementById('mic-btn');
+      const stage = btn.closest('.stage');
+      const subtitle = stage.querySelector('.subtitle');
+      
+      if (!window.setupAPI) {
+        console.log('[Setup] No setupAPI - simulating permission');
+        nextStage();
+        return;
+      }
+      
+      btn.textContent = 'Checking...';
+      btn.disabled = true;
+      
+      try {
+        // Check current status first
+        const status = await window.setupAPI.getMicrophoneStatus();
+        console.log('[Setup] Microphone status:', status);
+        
+        if (status === 'granted') {
+          // Already granted (from previous install or just now)
+          btn.textContent = '✓ Already Enabled';
+          btn.classList.add('btn-success');
+          subtitle.textContent = 'Microphone access was previously granted. You\'re all set.';
+          
+          // Show clear feedback before advancing
+          await sleep(1200);
+          nextStage();
+          return;
+        }
+        
+        if (status === 'denied') {
+          // Previously denied - must use System Settings
+          btn.textContent = 'Open Settings';
+          btn.disabled = false;
+          btn.onclick = () => window.setupAPI.openSystemSettings('microphone');
+          subtitle.innerHTML = '<strong>Microphone was previously denied.</strong><br>Please enable it in System Settings → Privacy & Security → Microphone.';
+          addContinueButton(btn, 'mic-continue');
+          return;
+        }
+        
+        if (status === 'restricted') {
+          // Restricted by parental controls or MDM
+          btn.textContent = 'Restricted';
+          btn.disabled = true;
+          subtitle.textContent = 'Microphone access is restricted on this Mac. Contact your administrator.';
+          addContinueButton(btn, 'mic-continue');
+          return;
+        }
+        
+        // Status is 'not-determined' - we can request
+        btn.textContent = 'Requesting...';
+        const granted = await window.setupAPI.requestMicrophone();
+        
+        if (granted) {
+          btn.textContent = '✓ Enabled';
+          btn.classList.add('btn-success');
+          subtitle.textContent = 'Microphone access granted. Rift can now hear you.';
+          await sleep(1000);
+          nextStage();
+        } else {
+          // User denied the prompt
+          btn.textContent = 'Open Settings';
+          btn.disabled = false;
+          btn.onclick = () => window.setupAPI.openSystemSettings('microphone');
+          subtitle.innerHTML = 'You denied microphone access. To use voice features, enable it in System Settings.';
+          addContinueButton(btn, 'mic-continue');
+        }
+      } catch (error) {
+        console.error('[Setup] Microphone error:', error);
+        btn.textContent = 'Enable Microphone';
+        btn.disabled = false;
+        subtitle.textContent = 'Could not check microphone status. Click to try again.';
+      }
+    }
+    
+    async function requestAccessibilityPermission() {
+      const btn = document.getElementById('accessibility-btn');
+      const stage = btn.closest('.stage');
+      const subtitle = stage.querySelector('.subtitle');
+      
+      if (!window.setupAPI) {
+        console.log('[Setup] No setupAPI - simulating permission');
+        nextStage();
+        return;
+      }
+      
+      btn.textContent = 'Checking...';
+      btn.disabled = true;
+      
+      try {
+        // Check current status first
+        const isEnabled = await window.setupAPI.getAccessibilityStatus();
+        console.log('[Setup] Accessibility status:', isEnabled);
+        
+        if (isEnabled) {
+          // Already enabled (from previous install)
+          btn.textContent = '✓ Already Enabled';
+          btn.classList.add('btn-success');
+          subtitle.textContent = 'Accessibility access was previously granted. You\'re all set.';
+          
+          await sleep(1200);
+          nextStage();
+          return;
+        }
+        
+        // Not enabled - need to request
+        // This will open System Settings on macOS
+        subtitle.innerHTML = 'Opening System Settings...<br>Please enable Rift in the Accessibility list.';
+        await window.setupAPI.requestAccessibility();
+        
+        // User needs to manually enable, then click Check Again
+        btn.textContent = 'Check Again';
+        btn.disabled = false;
+        subtitle.innerHTML = '<strong>Enable Rift in System Settings</strong><br>Find Rift in the list and toggle it on, then click Check Again.';
+        
+        let checkCount = 0;
+        btn.onclick = async () => {
+          btn.textContent = 'Checking...';
+          btn.disabled = true;
+          checkCount++;
+          
+          const enabled = await window.setupAPI.getAccessibilityStatus();
+          if (enabled) {
+            btn.textContent = '✓ Enabled';
+            btn.classList.add('btn-success');
+            subtitle.textContent = 'Accessibility enabled. Rift can now read selected text.';
+            await sleep(1000);
+            nextStage();
+          } else {
+            btn.textContent = 'Check Again';
+            btn.disabled = false;
+            // After 2 failed checks, suggest restart (macOS caches permission status)
+            if (checkCount >= 2) {
+              subtitle.innerHTML = '<strong>Permission may require app restart</strong><br>If you enabled Rift in Settings, try: Quit Rift → Reopen Rift.';
+              addRestartButton(btn);
+            } else {
+              subtitle.innerHTML = 'Not yet enabled. Toggle Rift ON in System Settings → Privacy & Security → Accessibility.';
+            }
+          }
+        };
+        
+        // Add skip option (some features work without it)
+        addContinueButton(btn, 'accessibility-continue', 'Skip for now');
+        
+      } catch (error) {
+        console.error('[Setup] Accessibility error:', error);
+        btn.textContent = 'Open Settings';
+        btn.disabled = false;
+        btn.onclick = () => window.setupAPI.openSystemSettings('accessibility');
+        subtitle.textContent = 'Could not check accessibility. Click to open Settings manually.';
+        addContinueButton(btn, 'accessibility-continue', 'Skip for now');
+      }
+    }
+    
+    // Helper: Add restart button when permission check fails due to macOS caching
+    function addRestartButton(parentBtn) {
+      const id = 'accessibility-restart';
+      if (document.getElementById(id)) return;
+      
+      const btn = document.createElement('button');
+      btn.id = id;
+      btn.className = 'btn btn-primary';
+      btn.textContent = 'Restart Rift';
+      btn.style.marginLeft = '12px';
+      btn.onclick = () => {
+        // Relaunch the app
+        if (window.setupAPI) {
+          window.setupAPI.restartApp();
+        }
+      };
+      parentBtn.parentElement.insertBefore(btn, parentBtn.nextSibling);
+    }
+    
+    // Helper: Add a continue/skip button
+    function addContinueButton(parentBtn, id, text = 'Continue') {
+      if (document.getElementById(id)) return;
+      
+      const btn = document.createElement('button');
+      btn.id = id;
+      btn.className = 'btn btn-secondary';
+      btn.textContent = text;
+      btn.style.marginLeft = '12px';
+      btn.onclick = () => nextStage();
+      parentBtn.parentNode.appendChild(btn);
+    }
+    
+    // Helper: Sleep for cleaner async flow
+    function sleep(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+    
+    async function finishSetup() {
+      if (!window.setupAPI) {
+        console.log('[Setup] No setupAPI - simulating finish');
+        alert('Setup complete! In the real app, Rift would now be ready to use.');
+        return;
+      }
+      
+      console.log('[Setup] Finishing setup and launching Rift...');
+      await window.setupAPI.finishAndLaunch();
+    }
+    
+    // ============================================
+    // REAL MODEL DOWNLOADS (with simulation fallback)
+    // ============================================
+    
+    // Python download script ids → DOM row ids (see download_models.py MODELS)
+    const MODEL_ID_MAP = {
+      'TTS': 'kokoro',
+      'STT': 'parakeet',
+      'LLM_FAST': 'qwen',
+      'LLM_DEEP': 'gemma',
+      'kokoro-82m': 'kokoro',
+      'parakeet-ctc-0.6b': 'parakeet',
+      'qwen3-0.6b-4bit': 'qwen',
+      'kokoro': 'kokoro',
+      'parakeet': 'parakeet',
+      'qwen': 'qwen',
+      'gemma': 'gemma'
+    };
+
+    function phaseLabel(data) {
+      if (!data || !data.phase) return '';
+      const p = data.phase;
+      if (p === 'dependencies_start') return 'Checking Python dependencies…';
+      if (p === 'pip_check') return 'Verifying package: ' + (data.package || '') + '…';
+      if (p === 'pip_install') return 'Installing package: ' + (data.package || '') + '…';
+      if (p === 'pip_done') return 'Installed: ' + (data.package || '') + '';
+      if (p === 'dependencies_done') return 'Starting model downloads…';
+      return '';
+    }
+    
+    let downloadInterval = null;
+    let lastProgressTime = {};
+    
+    // Start real downloads if setupAPI is available (Electron mode)
+    async function startRealDownloads() {
+      if (!window.setupAPI) {
+        console.log('[Setup] No setupAPI - using simulation');
+        simulateDownload();
+        return;
+      }
+      
+      console.log('[Setup] Starting real model downloads...');
+      goToStage('download');
+      window.setOrbState?.('active');
+
+      const phaseEl = document.getElementById('setup-download-phase');
+      if (phaseEl) phaseEl.textContent = '';
+
+      function resetDownloadRowsForCore() {
+        [['kokoro', 80], ['parakeet', 600], ['qwen', 400]].forEach(([id, mb]) => {
+          updateModelUI(id, 0, mb, 'queued');
+          const st = document.getElementById(id + '-status');
+          if (st) { st.textContent = 'Queued • ' + mb + ' MB'; st.className = 'model-status'; }
+          const pr = document.getElementById(id + '-progress');
+          if (pr) { pr.style.width = '0%'; pr.classList.remove('complete'); }
+          const sp = document.getElementById(id + '-speed');
+          if (sp) sp.style.display = 'none';
+        });
+        const gemmaSt = document.getElementById('gemma-status');
+        const gemmaPr = document.getElementById('gemma-progress');
+        if (gemmaSt) { gemmaSt.textContent = 'After setup (~5 GB)'; gemmaSt.className = 'model-status'; }
+        if (gemmaPr) { gemmaPr.style.width = '0%'; gemmaPr.classList.remove('complete'); }
+      }
+      resetDownloadRowsForCore();
+      completedModels.clear();
+      hasAutoAdvanced = false;
+      
+      // Check if already downloaded
+      const status = await window.setupAPI.getDownloadStatus();
+      if (status.modelsDownloaded) {
+        console.log('[Setup] Models already downloaded');
+        markAllModelsComplete();
+        setTimeout(() => goToStage('mic'), 500);
+        return;
+      }
+      
+      // Register event handlers
+      window.setupAPI.onPhase((data) => {
+        const label = phaseLabel(data);
+        if (phaseEl && label) phaseEl.textContent = label;
+      });
+
+      const lastDownloaded = {};
+
+      window.setupAPI.onModelStart((data) => {
+        console.log('[Setup] Model start:', data);
+        const uiId = MODEL_ID_MAP[data.model] || data.model;
+        updateModelUI(uiId, 0, data.totalMb, 'downloading');
+        lastProgressTime[uiId] = Date.now();
+      });
+      
+      window.setupAPI.onProgress((data) => {
+        const uiId = MODEL_ID_MAP[data.model] || data.model;
+        const now = Date.now();
+        const elapsed = (now - (lastProgressTime[uiId] || now)) / 1000;
+        const speed = elapsed > 0 ? (data.downloadedMb - (lastDownloaded[uiId] || 0)) / elapsed : 0;
+        lastProgressTime[uiId] = now;
+        lastDownloaded[uiId] = data.downloadedMb;
+        
+        updateModelUI(uiId, data.downloadedMb, data.totalMb, 'downloading', speed);
+      });
+      
+      window.setupAPI.onModelComplete((data) => {
+        console.log('[Setup] Model complete:', data);
+        const uiId = MODEL_ID_MAP[data.model] || data.model;
+        markModelComplete(uiId, data.cached);
+      });
+      
+      window.setupAPI.onAllComplete(() => {
+        console.log('[Setup] All downloads complete');
+        window.setOrbState?.('success');
+        window.setupAPI.removeAllListeners();
+        if (phaseEl) phaseEl.textContent = '';
+        if (!hasAutoAdvanced) {
+          hasAutoAdvanced = true;
+          setTimeout(() => goToStage('mic'), 600);
+        }
+      });
+      
+      window.setupAPI.onError((data) => {
+        console.error('[Setup] Download error:', data.error);
+        // Continue anyway - some models might work
+      });
+      
+      // Start downloads
+      await window.setupAPI.startDownloads();
+    }
+    
+    function updateModelUI(modelId, downloadedMb, totalMb, state, speed = 0) {
+      const progress = document.getElementById(modelId + '-progress');
+      const status = document.getElementById(modelId + '-status');
+      const speedEl = document.getElementById(modelId + '-speed');
+      
+      if (progress && totalMb > 0) {
+        progress.style.width = (downloadedMb / totalMb * 100) + '%';
+      }
+      
+      if (status) {
+        if (state === 'queued' && totalMb > 0) {
+          status.textContent = 'Queued • ' + Math.floor(totalMb) + ' MB';
+        } else {
+          status.textContent = Math.floor(downloadedMb) + ' / ' + Math.floor(totalMb) + ' MB';
+        }
+        status.className = 'model-status ' + state;
+      }
+      
+      if (speedEl && speed > 0) {
+        speedEl.textContent = speed.toFixed(1) + ' MB/s';
+        speedEl.style.display = 'block';
+      }
+    }
+    
+    const VISIBLE_MODELS = ['kokoro', 'parakeet', 'qwen', 'gemma'];
+    /** Core bundle rows that must finish before leaving the download stage */
+    const CORE_SETUP_MODELS = ['kokoro', 'parakeet', 'qwen'];
+    const completedModels = new Set();
+    let hasAutoAdvanced = false;
+    
+    function markModelComplete(modelId, cached = false) {
+      const progress = document.getElementById(modelId + '-progress');
+      const status = document.getElementById(modelId + '-status');
+      const speedEl = document.getElementById(modelId + '-speed');
+      
+      if (progress) {
+        progress.style.width = '100%';
+        progress.classList.add('complete');
+      }
+      if (status) {
+        status.textContent = cached ? 'Cached' : 'Complete';
+        status.className = 'model-status complete';
+      }
+      if (speedEl) {
+        speedEl.style.display = 'none';
+      }
+      
+      // Track completion
+      completedModels.add(modelId);
+      
+      // Auto-advance when all visible models are done
+      checkAutoAdvance();
+    }
+    
+    function checkAutoAdvance() {
+      if (hasAutoAdvanced) return;
+      
+      const allDone = CORE_SETUP_MODELS.every(id => completedModels.has(id));
+      if (allDone) {
+        hasAutoAdvanced = true;
+        console.log('[Setup] Core models complete - auto-advancing');
+        window.setOrbState?.('success');
+        setTimeout(() => goToStage('mic'), 800);
+      }
+    }
+    
+    function markAllModelsComplete() {
+      VISIBLE_MODELS.forEach(id => markModelComplete(id, true));
+    }
+    
+    // Fallback simulation for browser testing
+    function simulateDownload() {
+      if (downloadInterval) {
+        clearInterval(downloadInterval);
+        downloadInterval = null;
+        return;
+      }
+      
+      goToStage('download');
+      
+      const models = [
+        { id: 'kokoro', total: 80, current: 0 },
+        { id: 'parakeet', total: 600, current: 0 },
+        { id: 'qwen', total: 400, current: 0 },
+      ];
+      
+      let currentModel = 0;
+      
+      downloadInterval = setInterval(() => {
+        if (currentModel >= models.length) {
+          clearInterval(downloadInterval);
+          downloadInterval = null;
+          setTimeout(() => goToStage('mic'), 500);
+          return;
+        }
+        
+        const model = models[currentModel];
+        const speed = 8 + Math.random() * 10;
+        model.current = Math.min(model.total, model.current + speed * 0.1);
+        
+        updateModelUI(model.id, model.current, model.total, 'downloading', speed);
+        
+        if (model.current >= model.total) {
+          markModelComplete(model.id);
+          currentModel++;
+          
+          if (currentModel < models.length) {
+            const next = models[currentModel];
+            updateModelUI(next.id, 0, next.total, 'downloading');
+          }
+        }
+      }, 100);
+    }
+    
+    // Auto-start downloads when page loads in Electron
+    document.addEventListener('DOMContentLoaded', () => {
+      console.log('[Setup HTML] DOMContentLoaded fired');
+      console.log('[Setup HTML] window.setupAPI available:', !!window.setupAPI);
+      const urlParams = new URLSearchParams(window.location.search);
+      const mode = urlParams.get('mode');
+      const model = urlParams.get('model');
+      console.log('[Setup HTML] Query params - mode:', mode, 'model:', model);
+      
+      // Small delay to ensure orb is initialized
+      setTimeout(() => {
+        console.log('[Setup HTML] Checking setupAPI after delay:', !!window.setupAPI);
+        if (window.setupAPI) {
+          // Check if this is download-only mode for Chatterbox
+          if (mode === 'download' && model === 'chatterbox') {
+            console.log('[Setup HTML] Download mode for Chatterbox - showing download UI');
+            startChatterboxDownload();
+          } else {
+            console.log('[Setup HTML] Starting real downloads...');
+            startRealDownloads();
+          }
+        } else {
+          console.log('[Setup HTML] No setupAPI - browser mode, using simulation');
+        }
+      }, 500);
+    });
+    
+    // ============================================
+    // VOICE SELECTION - Real Kokoro TTS Voices
+    // ============================================
+    
+    let selectedVoice = 'af_heart';
+    let isPlaying = false;
+    let playbackTimeout = null;
+    let audioSimInterval = null;
+    let currentAudio = null;  // Track current audio to stop on new selection
+    
+    // Initialize voice selection when stage loads
+    function initVoiceSelection() {
+      const voiceList = document.getElementById('voice-list');
+      if (!voiceList) return;
+      
+      // Add click handlers to all voice buttons
+      voiceList.querySelectorAll('.voice-row').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          const voiceId = btn.dataset.voice;
+          selectVoice(voiceId, btn);
+        });
+      });
+      
+      console.log('[Setup] Voice selection initialized');
+    }
+    
+    async function selectVoice(voiceId, rowElement) {
+      console.log('[Setup] Selecting voice:', voiceId);
+      
+      // Stop any currently playing audio first
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.src = '';
+        currentAudio = null;
+      }
+      stopVoicePlayback();
+      
+      // Update visual selection
+      document.querySelectorAll('.voice-row').forEach(r => r.classList.remove('selected', 'playing'));
+      rowElement.classList.add('selected');
+      selectedVoice = voiceId;
+      
+      // Update subtitle with voice name
+      const subtitle = document.getElementById('voice-subtitle');
+      const voiceName = rowElement.querySelector('.voice-name').textContent;
+      const voiceDesc = rowElement.querySelector('.voice-desc').textContent;
+      subtitle.innerHTML = `<strong>${voiceName}</strong> · ${voiceDesc}`;
+      
+      // Animate orb - show selection
+      window.setOrbState?.('active');
+      
+      // Brief visual feedback
+      isPlaying = true;
+      rowElement.classList.add('playing');
+      window.setOrbState?.('speaking');
+      simulateAudioLevel(true);
+      
+      // Try real TTS preview
+      if (window.setupAPI) {
+        try {
+          console.log('[Setup] Requesting voice preview for:', voiceId);
+          const result = await window.setupAPI.previewVoice(voiceId, "Hello. I'll be your voice assistant.");
+          console.log('[Setup] Voice preview result:', result);
+          
+          // If we got audio data, play it
+          if (result && result.success && result.audioBase64) {
+            console.log('[Setup] Playing audio, base64 length:', result.audioBase64.length);
+            currentAudio = new Audio('data:audio/wav;base64,' + result.audioBase64);
+            
+            // Handle audio playback events
+            currentAudio.onended = () => {
+              console.log('[Setup] Audio playback finished');
+              currentAudio = null;
+              stopVoicePlayback();
+            };
+            currentAudio.onerror = (e) => {
+              console.error('[Setup] Audio playback error:', e);
+              currentAudio = null;
+              stopVoicePlayback();
+            };
+            
+            // Play with proper promise handling
+            try {
+              await currentAudio.play();
+              console.log('[Setup] Audio playback started');
+              // Don't stop playback early - let onended handle it
+              // Clear the short timeout since we're playing real audio
+              if (playbackTimeout) {
+                clearTimeout(playbackTimeout);
+                playbackTimeout = null;
+              }
+              return; // Exit early - onended will call stopVoicePlayback
+            } catch (playError) {
+              console.error('[Setup] Audio play() failed:', playError);
+            }
+          } else if (result && !result.success) {
+            console.log('[Setup] Voice preview failed:', result.error);
+          }
+        } catch (e) {
+          console.log('[Setup] Voice preview error:', e);
+        }
+      }
+      
+      // Visual feedback for ~2s (fallback if TTS not available)
+      playbackTimeout = setTimeout(() => {
+        stopVoicePlayback();
+      }, 2000);
+    }
+    
+    function stopVoicePlayback() {
+      isPlaying = false;
+      if (playbackTimeout) {
+        clearTimeout(playbackTimeout);
+        playbackTimeout = null;
+      }
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.src = '';
+        currentAudio = null;
+      }
+      document.querySelectorAll('.voice-row').forEach(r => r.classList.remove('playing'));
+      simulateAudioLevel(false);
+      window.setOrbState?.('idle');
+    }
+    
+    async function confirmVoice() {
+      stopVoicePlayback();
+      
+      // Save selected voice to settings
+      if (window.setupAPI) {
+        try {
+          await window.setupAPI.setVoice(selectedVoice);
+          console.log('[Setup] Voice saved:', selectedVoice);
+        } catch (e) {
+          console.log('[Setup] Could not save voice:', e);
+        }
+      }
+      nextStage();
+    }
+    
+    // Audio level simulation for orb animation
+    function simulateAudioLevel(active) {
+      if (audioSimInterval) {
+        clearInterval(audioSimInterval);
+        audioSimInterval = null;
+      }
+      
+      if (active) {
+        audioSimInterval = setInterval(() => {
+          const level = 0.3 + Math.random() * 0.5;
+          window.setAudioLevel?.(level);
+        }, 100);
+      } else {
+        window.setAudioLevel?.(0);
+      }
+    }
+    
+    // Initialize voice selection on page load
+    document.addEventListener('DOMContentLoaded', () => {
+      initVoiceSelection();
+      initChatterboxVoiceSelection();
+    });
+    
+    // ============================================
+    // CHATTERBOX ON-DEMAND DOWNLOAD
+    // ============================================
+    
+    let selectedChatterboxVoice = 'chloe';
+    
+    async function startChatterboxDownload() {
+      console.log('[Setup] Starting Chatterbox download mode');
+      
+      // Hide all stages and show Chatterbox download stage
+      document.querySelectorAll('.stage').forEach(s => s.classList.remove('active'));
+      document.getElementById('stage-chatterbox-download').classList.add('active');
+      
+      // Make orb smaller for this view
+      document.querySelector('.orb-container').classList.add('small');
+      window.setOrbState?.('active');
+      
+      if (!window.setupAPI) {
+        console.log('[Setup] No setupAPI - simulating Chatterbox download');
+        simulateChatterboxDownload();
+        return;
+      }
+      
+      // Check if already downloaded
+      try {
+        const isDownloaded = await window.setupAPI.isChatterboxDownloaded();
+        if (isDownloaded) {
+          console.log('[Setup] Chatterbox already downloaded');
+          markChatterboxComplete(true);
+          setTimeout(() => goToChatterboxVoiceStage(), 500);
+          return;
+        }
+      } catch (e) {
+        console.log('[Setup] Could not check Chatterbox status:', e);
+      }
+      
+      // Register event handlers for Chatterbox download
+      window.setupAPI.onChatterboxStart?.((data) => {
+        console.log('[Setup] Chatterbox download started:', data);
+        updateChatterboxUI(0, data.totalMb || 350, 'downloading');
+      });
+      
+      window.setupAPI.onChatterboxProgress?.((data) => {
+        updateChatterboxUI(data.downloadedMb, data.totalMb, 'downloading');
+      });
+      
+      window.setupAPI.onChatterboxComplete?.(() => {
+        console.log('[Setup] Chatterbox download complete');
+        markChatterboxComplete(false);
+        window.setOrbState?.('success');
+        setTimeout(() => goToChatterboxVoiceStage(), 800);
+      });
+      
+      window.setupAPI.onChatterboxError?.((data) => {
+        console.error('[Setup] Chatterbox download error:', data.error);
+        const status = document.getElementById('chatterbox-status');
+        if (status) {
+          status.textContent = 'Error: ' + (data.error || 'Download failed');
+          status.className = 'model-status';
+        }
+      });
+      
+      // Start the download
+      console.log('[Setup] Calling setupAPI.downloadChatterbox()');
+      try {
+        const result = await window.setupAPI.downloadChatterbox();
+      } catch (err) {
+      }
+    }
+    
+    function updateChatterboxUI(downloadedMb, totalMb, state) {
+      const progress = document.getElementById('chatterbox-progress');
+      const status = document.getElementById('chatterbox-status');
+      
+      if (progress && totalMb > 0) {
+        progress.style.width = (downloadedMb / totalMb * 100) + '%';
+      }
+      
+      if (status) {
+        status.textContent = Math.floor(downloadedMb) + ' / ' + Math.floor(totalMb) + ' MB';
+        status.className = 'model-status ' + state;
+      }
+    }
+    
+    function markChatterboxComplete(cached) {
+      const progress = document.getElementById('chatterbox-progress');
+      const status = document.getElementById('chatterbox-status');
+      const speedEl = document.getElementById('chatterbox-speed');
+      
+      if (progress) {
+        progress.style.width = '100%';
+        progress.classList.add('complete');
+      }
+      if (status) {
+        status.textContent = cached ? 'Already installed' : 'Complete';
+        status.className = 'model-status complete';
+      }
+      if (speedEl) {
+        speedEl.style.display = 'none';
+      }
+    }
+    
+    function simulateChatterboxDownload() {
+      let downloaded = 0;
+      const total = 350;
+      
+      const interval = setInterval(() => {
+        downloaded += Math.random() * 20 + 10;
+        if (downloaded >= total) {
+          downloaded = total;
+          clearInterval(interval);
+          markChatterboxComplete(false);
+          window.setOrbState?.('success');
+          setTimeout(() => goToChatterboxVoiceStage(), 800);
+        }
+        updateChatterboxUI(downloaded, total, 'downloading');
+      }, 100);
+    }
+    
+    function goToChatterboxVoiceStage() {
+      document.querySelectorAll('.stage').forEach(s => s.classList.remove('active'));
+      document.getElementById('stage-chatterbox-voice').classList.add('active');
+      window.setOrbState?.('idle');
+    }
+    
+    function initChatterboxVoiceSelection() {
+      const voiceList = document.getElementById('chatterbox-voice-list');
+      if (!voiceList) return;
+      
+      voiceList.querySelectorAll('.voice-row').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          const voiceId = btn.dataset.voice;
+          selectChatterboxVoice(voiceId, btn);
+        });
+      });
+    }
+    
+    async function selectChatterboxVoice(voiceId, rowElement) {
+      console.log('[Setup] Selecting Chatterbox voice:', voiceId);
+      
+      // Stop any playing audio first
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.src = '';
+        currentAudio = null;
+      }
+      stopVoicePlayback();
+      
+      // Update visual selection
+      document.querySelectorAll('#chatterbox-voice-list .voice-row').forEach(r => r.classList.remove('selected', 'playing'));
+      rowElement.classList.add('selected');
+      selectedChatterboxVoice = voiceId;
+      
+      // Update subtitle
+      const subtitle = document.getElementById('chatterbox-voice-subtitle');
+      const voiceName = rowElement.querySelector('.voice-name').textContent;
+      const voiceDesc = rowElement.querySelector('.voice-desc').textContent;
+      subtitle.innerHTML = `<strong>${voiceName}</strong> · ${voiceDesc}`;
+      
+      // Show playing state
+      isPlaying = true;
+      rowElement.classList.add('playing');
+      window.setOrbState?.('speaking');
+      simulateAudioLevel(true);
+      
+      // Try real TTS preview (same as Kokoro voice preview)
+      if (window.setupAPI) {
+        try {
+          console.log('[Setup] Requesting Chatterbox voice preview for:', voiceId);
+          const result = await window.setupAPI.previewVoice(voiceId, "Hello. I'll be your voice assistant.");
+          console.log('[Setup] Chatterbox voice preview result:', result);
+          
+          if (result && result.success && result.audioBase64) {
+            console.log('[Setup] Playing Chatterbox audio, base64 length:', result.audioBase64.length);
+            currentAudio = new Audio('data:audio/wav;base64,' + result.audioBase64);
+            
+            currentAudio.onended = () => {
+              console.log('[Setup] Chatterbox audio playback finished');
+              currentAudio = null;
+              stopVoicePlayback();
+            };
+            currentAudio.onerror = (e) => {
+              console.error('[Setup] Chatterbox audio playback error:', e);
+              currentAudio = null;
+              stopVoicePlayback();
+            };
+            
+            try {
+              await currentAudio.play();
+              console.log('[Setup] Chatterbox audio playback started');
+              if (playbackTimeout) {
+                clearTimeout(playbackTimeout);
+                playbackTimeout = null;
+              }
+              return;
+            } catch (playError) {
+              console.error('[Setup] Chatterbox audio play() failed:', playError);
+            }
+          } else if (result && !result.success) {
+            console.log('[Setup] Chatterbox voice preview failed:', result.error);
+          }
+        } catch (e) {
+          console.log('[Setup] Chatterbox voice preview error:', e);
+        }
+      }
+      
+      // Visual feedback fallback
+      playbackTimeout = setTimeout(() => {
+        stopVoicePlayback();
+      }, 2000);
+    }
+    
+    async function finishChatterboxSetup() {
+      console.log('[Setup] Finishing Chatterbox setup with voice:', selectedChatterboxVoice);
+      
+      if (window.setupAPI) {
+        try {
+          // Save the selected Chatterbox voice
+          await window.setupAPI.setChatterboxVoice(selectedChatterboxVoice);
+          console.log('[Setup] Saved Chatterbox voice:', selectedChatterboxVoice);
+          
+          // Signal completion to trigger the onComplete callback
+          await window.setupAPI.completeChatterboxSetup();
+          console.log('[Setup] Chatterbox setup completed signal sent');
+        } catch (e) {
+          console.error('[Setup] Error completing Chatterbox setup:', e);
+        }
+      }
+      
+      // Close the window
+      window.close();
+    }
+
+  </script>
+
+</body>
+</html>

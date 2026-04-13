@@ -226,3 +226,105 @@ if (notificationTypes.includes(response.type)) {
 **Alternative Considered:** Move Python notifications to stderr. Rejected because stdout filtering is simpler and more explicit.
 
 **Status:** IMPLEMENTED
+
+---
+
+## 2026-01-04: Code Talk TTS Transform Feature (VALIDATED)
+
+**Context:** TTS output sounds robotic when reading code. Users want TTS to speak code naturally like a senior developer explaining to a colleague.
+
+**Decision:** Implement LLM-powered text transformation before TTS:
+1. **Context Detection** - Detect active app (Cursor, VS Code, Terminal) and developer URLs (GitHub, StackOverflow)
+2. **TTS Transform** - Use 4B model to transform technical content into natural speech
+3. **Few-Shot Prompts** - Teach LLM code-to-speech patterns with 25+ examples
+4. **Cursor Content Support** - Handle markdown tables, file paths, percentages, mermaid diagrams
+
+**Architecture:**
+```
+Text Input → Context Detection → Mode Selection → LLM Transform (4B) → Kokoro TTS → Audio
+                   ↓                    ↓
+             AppContext          developer/conversational/default
+```
+
+**Key Files:**
+- `src/main/ipc/context-detection.ts` - Pure function `detectSpeechMode()`
+- `python/llm_server.py` - `handle_transform_for_tts()` using 4B model
+- `python/prompts.json` - `TTS_TRANSFORM_PROMPTS` with 25+ few-shot examples
+- `src/main/ipc/handlers.ts` - Wired into `synthesizeRealtime()`
+- `test-engine/tts-transform-scenarios.ts` - 45 test scenarios
+
+**Evaluation Results:**
+
+| Metric | Before | After | Change |
+|--------|--------|-------|--------|
+| Context Detection | N/A | 16/16 (100%) | NEW |
+| TTS Transform | N/A | 44/45 (97.8%) | NEW |
+| Overall Pass Rate | 70% | 69.7% | No regression |
+| Cursor Content Tests | N/A | 27/28 (96%) | NEW |
+
+**Example Transformations:**
+
+| Input | Spoken Output |
+|-------|---------------|
+| `overflow-x: hidden` | "overflow-x set to hidden" |
+| `@media (max-width: 480px)` | "media query for screens under 480 pixels" |
+| `Phase 2: 52%` | "Phase 2 at 52 percent" |
+| `src/main/ipc/handlers.ts` | "handlers file in source, main, IPC" |
+| `` `codeTalk` `` | "codeTalk" (backticks removed) |
+
+**Key Learnings:**
+1. **4B model required** - Smaller models can't handle complex code-to-speech
+2. **Few-shot prompting works** - 25+ examples cover most patterns
+3. **Context detection is fast** - AppleScript call adds <20ms
+4. **Latency acceptable** - 4-8 seconds for transform, happens before TTS
+
+**Status:** IMPLEMENTED AND VALIDATED
+
+---
+
+## 2026-01-04: Code Talk - LLM Pre-TTS Transformation
+
+**Context:** TTS reads code literally ("dot my class curly brace") which sounds unnatural. Developers want code spoken naturally.
+
+**Decision:** Add LLM-powered pre-transformation before TTS synthesis:
+1. **Context Detection** - Detect active app (Cursor, VS Code, Terminal) via AppleScript
+2. **Mode Selection** - Auto-select 'developer' mode in coding contexts
+3. **LLM Transform** - Use 4B model to transform technical content
+
+**Key Transformations:**
+- `overflow-x: hidden` → "overflow-x set to hidden"
+- `@media (max-width: 480px)` → "media query for screens under 480 pixels"
+- `16/16 (100%)` → "16 out of 16, which is 100 percent"
+- `src/main/ipc/handlers.ts` → "handlers file in source, main, IPC"
+
+**Files:**
+- `src/main/ipc/context-detection.ts` - Pure function for mode detection
+- `python/prompts.json` - Added 30+ few-shot examples in `TTS_TRANSFORM_PROMPTS`
+- `python/llm_server.py` - Added `handle_transform_for_tts()` using 4B model
+- `test-engine/tts-transform-scenarios.ts` - 45 test scenarios
+
+**Results:** Context Detection 100%, TTS Transform 97.8%, No regression.
+
+**Status:** COMPLETE
+
+---
+
+## 2026-01-04: Cursor Content TTS Expansion
+
+**Context:** Needed to support Cursor Agent chats, plans, and MD files with tables, paths, percentages.
+
+**Decision:** Expand to 8 content categories:
+1. Markdown Tables → natural descriptions
+2. File Paths → spoken with separators
+3. Statistics/Percentages → "X percent"
+4. CSS Specifications → "rem or pixels"
+5. Mermaid Diagrams → flow descriptions
+6. Status/Emoji → emoji removal
+7. Inline Code → backtick removal
+8. Section Headers → "Section N, Title"
+
+**Implementation:** Added 28 `cursorContentScenarios` derived from real Cursor Agent output.
+
+**Results:** 27/28 Cursor scenarios pass (96.4%), Total TTS Transform 44/45 (97.8%).
+
+**Status:** COMPLETE

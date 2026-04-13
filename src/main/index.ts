@@ -1,6 +1,7 @@
 import { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, nativeImage, dialog, clipboard } from 'electron';
 import * as path from 'path';
 import { createWidgetWindow } from './windows/widget';
+import { createSetupWindow } from './windows/setup';
 import { registerIpcHandlers, shutdownServers } from './ipc/handlers';
 import { initHoldToTalk, setHoldToTalkEnabled, stopHook } from './keyboard/holdToTalk';
 import { runSetupCheck, findPythonPath, collectDiagnostics } from './setup/pythonSetup';
@@ -14,7 +15,7 @@ import { modelDownloadService, DownloadProgress } from './services/modelDownload
 /**
  * Main Electron process entry point
  * 
- * Outloud - Pure Orb Interface with Black Hole visualization
+ * Rift - Pure Orb Interface with Black Hole visualization
  * Uses Three.js TSL which compiles to WebGPU or WebGL automatically
  */
 
@@ -23,7 +24,138 @@ app.commandLine.appendSwitch('enable-unsafe-webgpu');
 app.commandLine.appendSwitch('enable-features', 'Vulkan');
 
 let mainWindow: BrowserWindow | null = null;
+let setupWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
+
+/** Main-process services (Python servers, IPC) — once, after models exist for first-run */
+let mainBackendServicesRegistered = false;
+/** Dictation/settings handlers that live in index.ts (not handlers.ts) */
+let widgetIndexIpcRegistered = false;
+
+function registerWidgetIndexSideIpc(): void {
+  if (widgetIndexIpcRegistered) return;
+  widgetIndexIpcRegistered = true;
+
+  ipcMain.handle('dictation:set-mode', (_event, mode: 'toggle' | 'hold') => {
+    console.log('[Rift] Dictation mode set to:', mode);
+    setSetting('dictationMode', mode);
+    setHoldToTalkEnabled(mode === 'hold');
+    updateTrayMenu();
+    return { success: true, mode };
+  });
+
+  ipcMain.handle('settings:get-all', () => {
+    return getAllSettings();
+  });
+
+  ipcMain.handle('settings:set', (_event, key: string, value: unknown) => {
+    setSetting(key as keyof AppSettings, value as AppSettings[keyof AppSettings]);
+
+    if (key === 'launchAtLogin') {
+      app.setLoginItemSettings({
+        openAtLogin: value as boolean,
+        openAsHidden: true,
+      });
+    }
+
+    mainWindow?.webContents.send('settings:updated', key, value);
+    updateTrayMenu();
+    return { success: true };
+  });
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      mainWindow = createWidgetWindow();
+    } else if (mainWindow) {
+      mainWindow.show();
+    }
+  });
+}
+
+function scheduleTtsModelSwitchFromSettings(): void {
+  const savedTtsModel = getSetting('ttsModel');
+  const chatterboxDownloaded = getSetting('chatterboxDownloaded');
+  console.log(`[Rift] Saved TTS model: ${savedTtsModel}, chatterboxDownloaded: ${chatterboxDownloaded}`);
+
+  if (savedTtsModel && savedTtsModel !== 'kokoro') {
+    console.log(`[Rift] Will switch TTS server to saved model: ${savedTtsModel}`);
+
+    setTimeout(async () => {
+      console.log(`[Rift] Attempting to switch TTS model to ${savedTtsModel}...`);
+
+      const { getTtsServer } = require('./ipc/handlers');
+      const ttsServer = getTtsServer();
+      if (ttsServer && typeof ttsServer.switchModel === 'function') {
+        try {
+          const result = await ttsServer.switchModel(savedTtsModel);
+          console.log('[Rift] TTS switch result:', result);
+
+          if (result.success) {
+            console.log(`[Rift] TTS server switched to ${savedTtsModel}`);
+          } else {
+            console.error(`[Rift] Failed to switch to ${savedTtsModel}:`, result.error);
+            console.log('[Rift] Falling back to Kokoro for this session');
+            setSetting('ttsModel', 'kokoro');
+            mainWindow?.webContents.send('settings:updated', 'ttsModel', 'kokoro');
+            updateTrayMenu();
+
+            const { Notification } = require('electron');
+            if (Notification.isSupported()) {
+              new Notification({
+                title: 'TTS Model Unavailable',
+                body: `${savedTtsModel} model failed to load. Using Kokoro instead.`,
+              }).show();
+            }
+          }
+        } catch (err: unknown) {
+          console.error(`[Rift] Error switching to ${savedTtsModel}:`, err);
+        }
+      } else {
+        console.error('[Rift] ttsServer or switchModel not available');
+      }
+    }, 5000);
+  }
+}
+
+function registerMainBackendServices(): void {
+  if (mainBackendServicesRegistered) return;
+  mainBackendServicesRegistered = true;
+  registerIpcHandlers();
+  setupTestCaptureHandlers();
+  registerWidgetIndexSideIpc();
+  scheduleTtsModelSwitchFromSettings();
+}
+
+function startBackgroundLlmDeepIfNeeded(): void {
+  if (getSetting('llmDeepDownloaded')) return;
+  if (modelDownloadService.isDownloadInProgress()) return;
+  void modelDownloadService.downloadModels({ onlyModelId: 'LLM_DEEP' }).catch((err: unknown) => {
+    console.warn('[Rift] Background Gemma download failed (will retry on a later launch):', err);
+  });
+}
+
+const trayDownloadModelStart = (progress: DownloadProgress) => {
+  console.log(`[Rift] Downloading ${progress.name}...`);
+  updateTrayMenuDownloading(progress.name, 0, progress.totalMb);
+};
+const trayDownloadProgress = (progress: DownloadProgress) => {
+  updateTrayMenuDownloading(progress.name, progress.downloadedMb, progress.totalMb);
+};
+const trayDownloadModelComplete = (info: { model: string; name: string; cached: boolean }) => {
+  console.log(`[Rift] ${info.name} ${info.cached ? 'already cached' : 'downloaded'}`);
+};
+
+function wireTrayModelDownloadProgress(): void {
+  modelDownloadService.on('modelStart', trayDownloadModelStart);
+  modelDownloadService.on('progress', trayDownloadProgress);
+  modelDownloadService.on('modelComplete', trayDownloadModelComplete);
+}
+
+function unwireTrayModelDownloadProgress(): void {
+  modelDownloadService.removeListener('modelStart', trayDownloadModelStart);
+  modelDownloadService.removeListener('progress', trayDownloadProgress);
+  modelDownloadService.removeListener('modelComplete', trayDownloadModelComplete);
+}
 
 app.whenReady().then(async () => {
   // Check for headless E2E test mode first
@@ -34,7 +166,13 @@ app.whenReady().then(async () => {
     // DON'T call registerIpcHandlers() - it starts TTS and STT which consume ~2GB
     // Only start the LLM server directly for headless testing
     const { llmServer } = require('./services/llmService');
-    await llmServer.start();
+    try {
+      await llmServer.start();
+    } catch (e) {
+      console.error('[Rift] LLM server failed to start in headless mode:', e);
+      app.exit(1);
+      return;
+    }
     console.log('[Rift] LLM server started (TTS/STT skipped for memory)');
     
     // Run headless tests
@@ -54,47 +192,78 @@ app.whenReady().then(async () => {
     return;
   }
 
-  // Create system tray EARLY (so we can show download progress)
   createTray();
 
-  // Check if models need to be downloaded
-  if (!modelDownloadService.areModelsDownloaded()) {
-    console.log('[Rift] First launch - downloading models...');
-    
-    // Set up progress listeners
-    modelDownloadService.on('modelStart', (progress: DownloadProgress) => {
-      console.log(`[Rift] Downloading ${progress.name}...`);
-      updateTrayMenuDownloading(progress.name, 0, progress.totalMb);
+  const isFirstLaunch = !getSetting('setupComplete');
+  const forceSetup = process.argv.includes('--setup');
+  const setupFlow = isFirstLaunch || forceSetup;
+  const needsDownload = !modelDownloadService.areModelsDownloaded();
+
+  const onSetupCompleteLaunchWidget = () => {
+    console.log('[Rift] Setup complete - launching main widget');
+    mainWindow = createWidgetWindow();
+    initHoldToTalk(mainWindow);
+    const savedMode = getSetting('dictationMode');
+    setHoldToTalkEnabled(savedMode === 'hold');
+    registerGlobalShortcuts();
+    startBackgroundLlmDeepIfNeeded();
+  };
+
+  // First-run setup: show window immediately; downloads run via setup IPC (core models only).
+  // Defer Python servers until download process exits — avoids racing HF cache with TTS/STT.
+  if (setupFlow && needsDownload) {
+    console.log('[Rift] First-run setup — opening window before model download');
+
+    let notified = false;
+    modelDownloadService.once('start', () => {
+      if (notified) return;
+      notified = true;
+      const { Notification } = require('electron');
+      if (Notification.isSupported()) {
+        new Notification({
+          title: 'Rift',
+          body: 'Downloading required models. Keep this window open; you can also check progress in the menu bar.',
+        }).show();
+      }
     });
-    
-    modelDownloadService.on('progress', (progress: DownloadProgress) => {
-      updateTrayMenuDownloading(progress.name, progress.downloadedMb, progress.totalMb);
-    });
-    
-    modelDownloadService.on('modelComplete', (info: { model: string; name: string; cached: boolean }) => {
-      console.log(`[Rift] ${info.name} ${info.cached ? 'already cached' : 'downloaded'}`);
-    });
-    
-    // Start download
-    const downloadOk = await modelDownloadService.downloadModels();
-    
-    // Remove listeners
-    modelDownloadService.removeAllListeners();
-    
-    if (!downloadOk) {
-      console.error('[Rift] Model download failed');
-      // Continue anyway - some models might work
-    }
-    
-    // Switch to normal menu
+
+    wireTrayModelDownloadProgress();
+    let deferredRegisterDone = false;
+    const finishDeferredModelBootstrap = () => {
+      if (deferredRegisterDone) return;
+      deferredRegisterDone = true;
+      unwireTrayModelDownloadProgress();
+      updateTrayMenu();
+      registerMainBackendServices();
+    };
+    modelDownloadService.once('complete', finishDeferredModelBootstrap);
+    modelDownloadService.once('error', finishDeferredModelBootstrap);
+
+    console.log(`[Rift] Opening setup window (${isFirstLaunch ? 'first launch' : '--setup flag'})`);
+    openSetupWindow();
+    (app as any).once('setup-complete', onSetupCompleteLaunchWidget);
+    return;
+  }
+
+  // Returning user with missing models (rare): block here with tray progress only
+  if (!setupFlow && needsDownload) {
+    console.log('[Rift] Models missing — downloading core bundle before main window');
+    wireTrayModelDownloadProgress();
+    await modelDownloadService.downloadModels({ coreOnly: true });
+    unwireTrayModelDownloadProgress();
     updateTrayMenu();
   }
 
-  // Register IPC handlers
-  registerIpcHandlers();
-  setupTestCaptureHandlers();
+  registerMainBackendServices();
 
-  // Create the widget window
+  if (setupFlow) {
+    console.log(`[Rift] Opening setup window (${isFirstLaunch ? 'first launch' : '--setup flag'})`);
+    openSetupWindow();
+    (app as any).once('setup-complete', onSetupCompleteLaunchWidget);
+    return;
+  }
+  
+  // Create the widget window (normal launch, not setup mode)
   mainWindow = createWidgetWindow();
 
   // Start test server if in test mode
@@ -117,51 +286,8 @@ app.whenReady().then(async () => {
     openAsHidden: true,
   });
 
-  // Register global shortcuts
   registerGlobalShortcuts();
-
-  // IPC handler for dictation mode switch
-  ipcMain.handle('dictation:set-mode', (_event, mode: 'toggle' | 'hold') => {
-    console.log('[Rift] Dictation mode set to:', mode);
-    setSetting('dictationMode', mode);
-    setHoldToTalkEnabled(mode === 'hold');
-    updateTrayMenu(); // Refresh tray to show current mode
-    return { success: true, mode };
-  });
-
-  // IPC handler for getting all settings
-  ipcMain.handle('settings:get-all', () => {
-    return getAllSettings();
-  });
-
-  // IPC handler for setting a specific setting
-  ipcMain.handle('settings:set', (_event, key: string, value: any) => {
-    setSetting(key as keyof AppSettings, value);
-    
-    // Handle special cases
-    if (key === 'launchAtLogin') {
-      app.setLoginItemSettings({
-        openAtLogin: value,
-        openAsHidden: true,
-      });
-    }
-    
-    // Notify renderer of setting change
-    mainWindow?.webContents.send('settings:updated', key, value);
-    
-    // Refresh tray menu to reflect changes
-    updateTrayMenu();
-    
-    return { success: true };
-  });
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      mainWindow = createWidgetWindow();
-    } else if (mainWindow) {
-      mainWindow.show();
-    }
-  });
+  startBackgroundLlmDeepIfNeeded();
 });
 
 app.on('window-all-closed', () => {
@@ -184,8 +310,14 @@ app.on('before-quit', () => {
  * Create system tray icon with comprehensive menu
  */
 function createTray() {
-  // Use our beautiful programmatic black hole icon
-  tray = new Tray(createBlackHoleIcon());
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'assets', 'trayIconTemplate.png')
+    : path.join(app.getAppPath(), 'assets', 'trayIconTemplate.png');
+    
+  const trayIcon = nativeImage.createFromPath(iconPath);
+  trayIcon.setTemplateImage(true);
+
+  tray = new Tray(trayIcon);
   tray.setToolTip('Rift');
   updateTrayMenu();
   
@@ -202,64 +334,171 @@ function createTray() {
   });
 }
 
+// Voice definitions for TTS models
+const KOKORO_VOICES: Record<string, string> = {
+  'af_heart': 'Heart',
+  'af_bella': 'Bella',
+  'af_sarah': 'Sarah',
+  'am_adam': 'Adam',
+};
+
+const CHATTERBOX_VOICES: Record<string, string> = {
+  'aaron': 'Aaron',
+  'abigail': 'Abigail',
+  'anaya': 'Anaya',
+  'andy': 'Andy',
+  'archer': 'Archer',
+  'brian': 'Brian',
+  'chloe': 'Chloe',
+  'dylan': 'Dylan',
+  'evelyn': 'Evelyn',
+  'fiona': 'Fiona',
+};
+
 /**
- * Create a sharp black hole icon for the menu bar.
- * Interstellar-style: thin ring with horizontal accretion disk through center.
- * Clean geometric design matching macOS menu bar icon style.
+ * Handle TTS model switch from tray menu
  */
-function createBlackHoleIcon(): Electron.NativeImage {
-  const size = 22;
-  const canvas = Buffer.alloc(size * size * 4);
+async function handleTTSModelSwitch(newModel: 'kokoro' | 'chatterbox' | 'chatterbox-turbo' | 'chatterbox-full-mlx') {
+  const currentModel = getSetting('ttsModel');
+  const chatterboxDownloaded = getSetting('chatterboxDownloaded');
+  const chatterboxTurboDownloaded = getSetting('chatterboxTurboDownloaded');
   
-  const cx = size / 2;
-  const cy = size / 2;
-  
-  // Parameters for clean geometric look
-  const outerRadius = 9;        // Outer edge of ring
-  const ringThickness = 1.5;    // Thin ring stroke
-  const innerRadius = outerRadius - ringThickness;
-  const eventHorizon = 2.5;     // Dark center
-  const diskHeight = 2;         // Horizontal accretion disk thickness
-  const diskExtend = 10;        // How far disk extends beyond ring
-  
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const dx = x - cx;
-      const dy = y - cy;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      const idx = (y * size + x) * 4;
+  if (newModel === currentModel) {
+    return;
+  }
+
+  // Chatterbox Turbo - switch directly (no dialog, model downloads on demand via HuggingFace cache)
+  // Note: Turbo runs on CPU on Mac (MPS has bugs), so it may be slower than MLX models
+
+  // Check if Chatterbox needs to be downloaded
+  if (newModel === 'chatterbox' && !chatterboxDownloaded) {
+    // Check available RAM - warn on 8GB Macs
+    const os = require('os');
+    const totalRamGB = os.totalmem() / (1024 ** 3);
+    
+    if (totalRamGB <= 8) {
+      const { response } = await dialog.showMessageBox({
+        type: 'warning',
+        title: 'Memory Warning',
+        message: 'Chatterbox may run slowly on 8GB Macs',
+        detail: 'Chatterbox uses more memory than Kokoro. For the best experience, we recommend staying with Kokoro on 8GB Macs.\n\nWould you like to continue anyway?',
+        buttons: ['Use Chatterbox Anyway', 'Stay with Kokoro'],
+        defaultId: 1,
+      });
       
-      let alpha = 0;
+      if (response === 1) {
+        updateTrayMenu(); // Reset radio button
+        return;
+      }
+    }
+
+    // Open setup window in download mode for Chatterbox
+    console.log('[Rift] Chatterbox not downloaded, opening download window...');
+    
+    const { createSetupWindow } = require('./windows/setup');
+    const downloadWindow = createSetupWindow({
+      mode: 'download',
+      downloadModel: 'chatterbox',
+      onComplete: () => {
+        console.log('[Rift] Chatterbox setup complete callback');
+      }
+    });
+    
+    // Listen for the setup completion event (fired from setup window)
+    const onChatterboxComplete = async () => {
+      console.log('[Rift] Chatterbox setup complete - switching model');
       
-      // 1. Horizontal accretion disk (full width band through middle)
-      if (Math.abs(dy) <= diskHeight && Math.abs(dx) <= diskExtend) {
-        // Skip the event horizon center
-        if (dist > eventHorizon) {
-          alpha = 255;
+      // Notify renderer
+      mainWindow?.webContents.send('settings:updated', 'ttsModel', 'chatterbox');
+      mainWindow?.webContents.send('settings:updated', 'ttsVoiceChatterbox', getSetting('ttsVoiceChatterbox'));
+      
+      // Tell TTS server to switch models
+      const { getTtsServer: getTtsServerForSwitch } = require('./ipc/handlers');
+      const ttsServerForSwitch = getTtsServerForSwitch();
+      if (ttsServerForSwitch && typeof ttsServerForSwitch.switchModel === 'function') {
+        const result = await ttsServerForSwitch.switchModel('chatterbox');
+        if (!result.success) {
+          console.error('[Rift] TTS model switch failed:', result.error);
         }
       }
       
-      // 2. Outer ring (thin stroke)
-      if (dist >= innerRadius && dist <= outerRadius) {
-        alpha = 255;
+      updateTrayMenu();
+      (app as any).removeListener('chatterbox-setup-complete', onChatterboxComplete);
+    };
+    
+    (app as any).on('chatterbox-setup-complete', onChatterboxComplete);
+    
+    downloadWindow.on('closed', () => {
+      // If download was cancelled, stay on current model
+      if (!getSetting('chatterboxDownloaded')) {
+        updateTrayMenu(); // Reset radio button
       }
-      
-      // 3. Event horizon stays dark (already 0)
-      if (dist <= eventHorizon) {
-        alpha = 0;
-      }
-      
-      // Template image: white with alpha
-      canvas[idx] = 255;
-      canvas[idx + 1] = 255;
-      canvas[idx + 2] = 255;
-      canvas[idx + 3] = alpha;
+      (app as any).removeListener('chatterbox-setup-complete', onChatterboxComplete);
+    });
+    return;
+  }
+
+  // Switch the model (direct switch - chatterbox already downloaded)
+  console.log(`[Rift] Switching TTS model to: ${newModel}`);
+  
+  setSetting('ttsModel', newModel);
+  
+  // Notify renderer
+  mainWindow?.webContents.send('settings:updated', 'ttsModel', newModel);
+  
+  // Tell TTS server to switch models
+  const { getTtsServer: getServer } = require('./ipc/handlers');
+  const server = getServer();
+  
+  if (server && typeof server.switchModel === 'function') {
+    
+    const result = await server.switchModel(newModel);
+    
+    if (!result.success) {
+      console.error('[Rift] TTS model switch failed:', result.error);
+      // Revert setting on failure
+      setSetting('ttsModel', currentModel);
     }
+  } else {
   }
   
-  const image = nativeImage.createFromBuffer(canvas, { width: size, height: size });
-  image.setTemplateImage(true);
-  return image;
+  updateTrayMenu();
+}
+
+/**
+ * Build voice submenu based on current TTS model
+ */
+function buildVoiceSubmenu(): Electron.MenuItemConstructorOptions[] {
+  const currentModel = getSetting('ttsModel');
+  // chatterbox-full-mlx uses a single default voice, others have voice options
+  const voices = (currentModel === 'chatterbox' || currentModel === 'chatterbox-turbo') 
+    ? CHATTERBOX_VOICES 
+    : currentModel === 'chatterbox-full-mlx'
+      ? { 'default': 'Default Voice' }
+      : KOKORO_VOICES;
+  
+  // Voice setting key depends on model
+  let voiceSetting: 'ttsVoiceKokoro' | 'ttsVoiceChatterbox' | 'ttsVoiceChatterboxTurbo';
+  if (currentModel === 'chatterbox' || currentModel === 'chatterbox-full-mlx') {
+    voiceSetting = 'ttsVoiceChatterbox';
+  } else if (currentModel === 'chatterbox-turbo') {
+    voiceSetting = 'ttsVoiceChatterboxTurbo';
+  } else {
+    voiceSetting = 'ttsVoiceKokoro';
+  }
+  
+  const currentVoice = getSetting(voiceSetting);
+
+  return Object.entries(voices).map(([id, name]) => ({
+    label: name,
+    type: 'radio' as const,
+    checked: currentVoice === id,
+    click: () => {
+      setSetting(voiceSetting, id);
+      mainWindow?.webContents.send('settings:updated', voiceSetting, id);
+      updateTrayMenu();
+    },
+  }));
 }
 
 /**
@@ -323,6 +562,39 @@ function updateTrayMenu() {
           updateTrayMenu();
         },
       })),
+    },
+    {
+      label: 'TTS Model',
+      submenu: [
+        {
+          label: 'Kokoro (Stable)',
+          type: 'radio' as const,
+          checked: getSetting('ttsModel') === 'kokoro',
+          click: () => handleTTSModelSwitch('kokoro'),
+        },
+        {
+          label: 'Chatterbox MLX (Fast)',
+          type: 'radio' as const,
+          checked: getSetting('ttsModel') === 'chatterbox-full-mlx',
+          click: () => handleTTSModelSwitch('chatterbox-full-mlx'),
+        },
+        {
+          label: 'Chatterbox (PyTorch)',
+          type: 'radio' as const,
+          checked: getSetting('ttsModel') === 'chatterbox',
+          click: () => handleTTSModelSwitch('chatterbox'),
+        },
+        {
+          label: 'Chatterbox Turbo (Beta)',
+          type: 'radio' as const,
+          checked: getSetting('ttsModel') === 'chatterbox-turbo',
+          click: () => handleTTSModelSwitch('chatterbox-turbo'),
+        },
+      ],
+    },
+    {
+      label: 'Voice',
+      submenu: buildVoiceSubmenu(),
     },
     {
       label: 'Dictation Mode',
@@ -431,6 +703,10 @@ function updateTrayMenu() {
       click: showAboutDialog,
     },
     {
+      label: 'Run Setup...',
+      click: openSetupWindow,
+    },
+    {
       label: 'Copy Diagnostics',
       click: () => {
         const diagnostics = collectDiagnostics();
@@ -474,11 +750,11 @@ function updateTrayMenuDownloading(modelName: string, downloadedMb: number, tota
     },
     { type: 'separator' },
     {
-      label: 'This may take a few minutes',
+      label: 'Large models can take 20+ minutes on slower connections',
       enabled: false,
     },
     {
-      label: 'Models are downloaded once on first launch',
+      label: 'Gemma may continue in the background after setup',
       enabled: false,
     },
     { type: 'separator' },
@@ -493,6 +769,21 @@ function updateTrayMenuDownloading(modelName: string, downloadedMb: number, tota
   ]);
 
   tray.setContextMenu(contextMenu);
+}
+
+/**
+ * Open the Setup window
+ */
+function openSetupWindow() {
+  if (setupWindow && !setupWindow.isDestroyed()) {
+    setupWindow.focus();
+    return;
+  }
+  
+  setupWindow = createSetupWindow();
+  setupWindow.on('closed', () => {
+    setupWindow = null;
+  });
 }
 
 /**

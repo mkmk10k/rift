@@ -1,0 +1,79 @@
+{
+  "generated": "2026-04-04T02:08:07.236Z",
+  "models": [
+    {
+      "model": "qwen3",
+      "displayName": "Qwen3 4B (baseline)",
+      "repo": "mlx-community/Qwen3-4B-4bit",
+      "timestamp": "2026-04-04T02:05:33.207Z",
+      "passRate": 56.1,
+      "passed": 37,
+      "total": 66,
+      "avgLatencyMs": 1590.5,
+      "phase2PassRate": 45.16129032258064,
+      "phase3PassRate": 42.857142857142854,
+      "phase4PassRate": 80.95238095238095,
+      "ttsTransformPassRate": null,
+      "ttsTransformAvgLatencyMs": null,
+      "serverStartupMs": 0,
+      "errors": []
+    },
+    {
+      "model": "gemma4-e4b",
+      "displayName": "Gemma 4 E4B 4-bit",
+      "repo": "mlx-community/gemma-4-e4b-it-4bit",
+      "timestamp": "2026-04-04T02:06:20.160Z",
+      "passRate": 68.2,
+      "passed": 45,
+      "total": 66,
+      "avgLatencyMs": 698.6290322580645,
+      "phase2PassRate": 51.61290322580645,
+      "phase3PassRate": 92.85714285714286,
+      "phase4PassRate": 76.19047619047619,
+      "ttsTransformPassRate": null,
+      "ttsTransformAvgLatencyMs": null,
+      "serverStartupMs": 0,
+      "errors": []
+    },
+    {
+      "model": "gemma4-e4b-6bit",
+      "displayName": "Gemma 4 E4B 6-bit",
+      "repo": "mlx-community/gemma-4-e4b-it-6bit",
+      "timestamp": "2026-04-04T02:07:05.717Z",
+      "passRate": 68.2,
+      "passed": 45,
+      "total": 66,
+      "avgLatencyMs": 676.241935483871,
+      "phase2PassRate": 51.61290322580645,
+      "phase3PassRate": 92.85714285714286,
+      "phase4PassRate": 76.19047619047619,
+      "ttsTransformPassRate": null,
+      "ttsTransformAvgLatencyMs": null,
+      "serverStartupMs": 0,
+      "errors": []
+    },
+    {
+      "model": "gemma4-moe",
+      "displayName": "Gemma 4 26B MoE 4-bit",
+      "repo": "mlx-community/gemma-4-26b-a4b-it-4bit",
+      "timestamp": "2026-04-04T02:08:07.228Z",
+      "passRate": 57.6,
+      "passed": 38,
+      "total": 66,
+      "avgLatencyMs": 917.8870967741935,
+      "phase2PassRate": 51.61290322580645,
+      "phase3PassRate": 42.857142857142854,
+      "phase4PassRate": 76.19047619047619,
+      "ttsTransformPassRate": null,
+      "ttsTransformAvgLatencyMs": null,
+      "serverStartupMs": 0,
+      "errors": []
+    }
+  ],
+  "winner": "gemma4-e4b-6bit",
+  "winnerReason": "Gemma 4 E4B 6-bit wins with 68.2% pass rate (+12.1% vs baseline)",
+  "recommendations": [
+    "Gemma 4 E4B 4-bit shows significant quality improvement (+12.1%). Consider as new default.",
+    "Gemma 4 E4B 6-bit shows significant quality improvement (+12.1%). Consider as new default."
+  ]
+}
